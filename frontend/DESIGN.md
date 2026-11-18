@@ -18,12 +18,13 @@ Dunia Inotia 4 digambar di 480×320 lalu diperbesar. Kesan halusnya tidak datang
 | Aset | Ukuran asli | Catatan |
 |---|---|---|
 | Resolusi logis | ±480×270 | zoom kamera bulat (×3 di 1440×900, ×2 di HP) |
-| Avatar | 16×34 px, 3 arah (depan, belakang, samping + flip) | 6 ramp baju; pemain lokal hijau daun |
-| Siluet ??? | 20×9 px, satu ukuran | near-black `#0c0a16` (A3) |
-| Teri Ngantuk | 40×19 px | kartu: ×3 |
-| Raja Abyss | 128/96/64/48 px lebar | reveal: 128 ×2; akuarium 64; ember 48 |
+| Avatar | 16×34 px, 3 arah (depan, belakang, samping + flip), 2 frame langkah | 6 ramp baju (hijau daun untuk pemain lokal, koral, biru, putih doff, hitam doff, mawar); ungu dan emas tidak dipakai karena milik Secret (§4.3) |
+| Siluet ??? | 22×11 px, satu ukuran | isi near-black `#0c0a16` + tepi terang 1 px `#b6f1f2` supaya terbaca di air navy (A3, §8.2) |
+| Teri Ngantuk | 40×22 px | kartu: ×3 |
+| Raja Abyss | 128/96/64/48 px lebar | reveal: 128 ×2; akuarium 64; ember 48; outline indigo `#170f45` |
 | Bangunan | 52 sampai 136 px lebar | dijangkar di tepi bawah footprint `map.ts` |
-| Kelapa | 64×76 px | 2 arah condong |
+| Kelapa | 64×76 px | 2 arah condong, bayangan mahkota di pasir |
+| Tiang lentera | 14×26 px | cahaya ADD 4 cincin + pantulan putus-putus di air |
 
 ## Palet
 - Laut (13 tingkat): `#f2fcff` buih, `#6fe3e2` dangkal, `#14b8ec` deep sky, `#0b6eaa` biru baja, `#06162d` paling dalam (juga latar kanvas).
@@ -35,15 +36,16 @@ Dunia Inotia 4 digambar di 480×320 lalu diperbesar. Kesan halusnya tidak datang
 Belum berubah: Nunito, Pixelify Sans, dan Silkscreen dari sistem. Hosting font sendiri (A6) masuk ITM-05.
 
 ## Di mana kodenya
-- `src/game/terrainArt.ts`: pelukis tanah per piksel (laut, pasir, rumput, dermaga), dihitung sekali saat halaman dibuka.
+- `src/game/terrainArt.ts`: pelukis tanah per piksel (laut, pasir, rumput, dermaga). Hasilnya dipanggang ke `public/terrain.png` dengan `npm run bake` (deterministik), dan kalau berkas itu tidak ada, scene melukis ulang saat jalan.
 - `src/game/sprites.ts`: avatar, siluet, pelampung, lentera, bayangan, dan cahaya, digambar dari peta karakter.
 - `src/game/props.ts`: bangunan, kelapa, batu, dan semak, dilukis piksel di kode.
 - `public/sprites/*.png`: dua ikan pengunci gaya. Asal-usulnya dicatat di `ASSETS.md`.
+- Gerak hiasan (kilau air, napas lentera) dimatikan bila `prefers-reduced-motion: reduce`. Label zona disembunyikan saat masuk pita HUD bawah.
 
 ## Bagian lemah (jujur)
-- Avatar belum punya animasi langkah kaki, baru naik-turun 1 px. Pose lempar dan angkat masih memakai sprite diam.
+- Pose lempar dan angkat masih memakai sprite diam. Animasi langkahnya baru 2 frame.
 - Baru 2 dari 19 ikan punya sprite. Sisanya masih SVG placeholder (sesuai HANDOFF §9: buktikan satu ikan dulu).
-- Ikan diturunkan dari gambar AI lalu dikecilkan dan dikuantisasi. Tepinya sudah dirapikan, tapi detailnya belum sebersih gambar tangan.
-- Melukis tanah memakan ±0,2 sampai 0,4 detik di laptop. Di HP lambat bisa lebih lama, jadi kalau terasa, pindahkan ke Worker.
-- Label dunia (nama zona) masih memakai font sistem.
+- Kedua ikan berasal dari frame konsep, lalu dikecilkan dan dikuantisasi. Mata, kumis, dan outline-nya sudah dirapikan tangan, tapi sirip dan mahkota belum sebersih piksel yang digambar dari nol.
+- Rumput masih punya bercak besar dua nada. Rumpun kecil sudah dikelompokkan di tepi bercak.
+- Label dunia masih memakai font sistem sampai ITM-05.
 - 3 aturan ART_BIBLE (§3.4 palet, §2.3 dithering, §3.2 ukuran avatar) belum disetujui Dave.

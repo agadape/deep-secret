@@ -90,29 +90,67 @@ function windowPane(p: Px, x0: number, y0: number, w = 8, h = 6) {
   p.rect(x0 - 1, y0 + h, w + 2, 1, WOOD[1]); // sill catches the light
 }
 
-/** Shingled roof seen from above at an angle: light ridge, rows darken toward the eave, overhang shadow. */
+/**
+ * Shingled roof seen from above at an angle: a trapezoid that narrows toward the ridge, a ridge cap, rows that darken
+ * toward the eave, seams offset per row, and a dark eave underside with a 1 px lit lip.
+ */
 function roof(p: Px, x0: number, y0: number, w: number, h: number, ramp: string[]) {
+  const inset = (y: number) => Math.floor(((y0 + h - y) / h) * 5);
   for (let y = y0; y < y0 + h; y++) {
     const row = Math.floor((y - y0) / 4);
     const r = (y - y0) % 4;
     const depth = Math.min(ramp.length - 3, Math.floor(((y - y0) / h) * (ramp.length - 2)));
-    for (let x = x0; x < x0 + w; x++) {
+    const off = Math.floor(hash(row, 0, 41) * 6);
+    const a = x0 + inset(y);
+    const b = x0 + w - inset(y);
+    for (let x = a; x < b; x++) {
       let k = depth + (r === 0 ? 0 : r === 3 ? 2 : 1);
-      if (r !== 3 && (x - x0 + (row % 2) * 3) % 6 === 0) k += 1; // shingle seams
-      if (x < x0 + 2) k -= 1;
-      if (x >= x0 + w - 2) k += 1;
+      if (r !== 3 && (x - a + off) % 7 === 0) k += 1; // shingle seams
+      if (x < a + 2) k -= 1;
+      if (x >= b - 2) k += 1;
       p.set(x, y, ramp[Math.max(0, Math.min(ramp.length - 1, k))]);
     }
+    p.set(a - 1, y, INK);
+    p.set(b, y, INK);
   }
-  for (let x = x0; x < x0 + w; x++) {
-    p.set(x, y0 - 1, INK);
-    p.set(x, y0 + h, INK);
+  // ridge cap
+  const ra = x0 + inset(y0);
+  const rb = x0 + w - inset(y0);
+  for (let x = ra; x < rb; x++) {
+    p.set(x, y0 - 2, INK);
+    p.set(x, y0 - 1, ramp[0]);
+    p.set(x, y0, ramp[1]);
   }
-  for (let y = y0; y < y0 + h; y++) {
-    p.set(x0 - 1, y, INK);
-    p.set(x0 + w, y, INK);
+  p.set(ra - 1, y0 - 1, INK);
+  p.set(rb, y0 - 1, INK);
+  // eave: lit lip, then the dark underside
+  for (let x = x0 - 1; x <= x0 + w; x++) {
+    p.set(x, y0 + h, ramp[1]);
+    p.set(x, y0 + h + 1, ramp[ramp.length - 1]);
+    p.set(x, y0 + h + 2, INK);
   }
-  for (let x = x0 + 1; x < x0 + w - 1; x++) p.set(x, y0, ramp[0]); // ridge highlight
+}
+
+/** Tiny side-view fish (7x4) with a forked tail, an eye and a belly highlight; used in tanks and crates. */
+function tinyFish(p: Px, x: number, y: number, col: string, flip = false) {
+  const px = (dx: number, dy: number, c: string) => p.set(flip ? x + 6 - dx : x + dx, y + dy, c);
+  for (let dx = 1; dx <= 4; dx++) {
+    px(dx, 1, col);
+    px(dx, 2, col);
+  }
+  px(2, 0, col);
+  px(3, 0, col);
+  px(2, 3, "#ffffff");
+  px(3, 3, col);
+  px(5, 0, col);
+  px(5, 3, col);
+  px(6, 0, col);
+  px(6, 3, col);
+  px(5, 1, col);
+  px(5, 2, col);
+  px(1, 1, INK);
+  px(0, 1, col);
+  px(0, 2, col);
 }
 
 export type BuildingArt = { key: string; w: number; h: number };
@@ -123,18 +161,32 @@ export function makeBuildings(scene: Phaser.Scene): Record<string, BuildingArt> 
 
   // Rod Shop: blue shingle roof, plank wall, door, window, a giant rod with a bobber as the sign.
   {
-    const w = 70;
-    const h = 66;
+    const w = 72;
+    const h = 80;
+    const t = 14; // headroom for the rod sign above the roof
     canvas(scene, "b-shop", w, h, (p) => {
-      roof(p, 1, 2, w - 2, 36, BLUE_ROOF);
-      wall(p, 5, 39, w - 10, 26);
-      door(p, w / 2, 65);
-      windowPane(p, 11, 46);
-      windowPane(p, w - 19, 46);
-      // the sign: a rod leaning on the right wall with a red-white bobber
-      for (let i = 0; i < 34; i++) p.set(w - 8 - Math.floor(i / 3), 64 - i, i % 5 === 0 ? WOOD[4] : WOOD[2]);
-      p.rect(w - 21, 26, 3, 2, "#ffffff");
-      p.rect(w - 21, 28, 3, 2, "#ff5a4f");
+      roof(p, 3, t + 3, w - 6, 33, BLUE_ROOF);
+      wall(p, 6, t + 39, w - 12, 27);
+      door(p, w / 2, h - 1);
+      windowPane(p, 12, t + 47);
+      windowPane(p, w - 20, t + 47);
+      // the sign: a big rod (3 px) leaning on the right wall, its tip and bobber well above the roofline (ART_BIBLE §5.3)
+      const len = 71;
+      for (let i = 0; i < len; i++) {
+        const x = w - 5 - Math.floor(i / 4);
+        const y = h - 2 - i;
+        p.set(x - 1, y, INK);
+        p.set(x, y, i % 6 === 0 ? WOOD[4] : WOOD[1]);
+        p.set(x + 1, y, WOOD[3]);
+        p.set(x + 2, y, INK);
+      }
+      // the bobber hangs right at the rod tip
+      const tipX = w - 5 - Math.floor((len - 1) / 4);
+      const bx = tipX - 3;
+      p.rect(bx - 1, 0, 6, 7, INK);
+      p.rect(bx, 1, 4, 2, "#ffffff");
+      p.rect(bx, 3, 4, 3, "#ff5a4f");
+      p.set(bx + 3, 5, "#c2362f");
     });
     out.shop = { key: "b-shop", w, h };
   }
@@ -182,14 +234,8 @@ export function makeBuildings(scene: Phaser.Scene): Record<string, BuildingArt> 
         p.rect(cx, 40, 14, 7, "#cfeef7");
         p.rect(cx, 40, 14, 1, "#ffffff");
         p.rect(cx, 46, 14, 1, "#8cc6d8");
-        for (let f = 0; f < 2; f++) {
-          const fx = cx + 2 + f * 6;
-          const col = TIER_FISH[(c + f) % TIER_FISH.length];
-          p.rect(fx, 42, 4, 2, col);
-          p.set(fx + 4, 41, col);
-          p.set(fx + 4, 44, col);
-          p.set(fx, 42, INK);
-        }
+        tinyFish(p, cx + 1, 41, TIER_FISH[c % TIER_FISH.length]);
+        tinyFish(p, cx + 7, 42, TIER_FISH[(c + 1) % TIER_FISH.length], true);
       }
     });
     out.market = { key: "b-market", w, h };
@@ -241,10 +287,10 @@ export function makeBuildings(scene: Phaser.Scene): Record<string, BuildingArt> 
       // roof slab
       for (let y = 14; y < 40; y++)
         for (let x = 2; x < w - 2; x++) {
-          let k = y < 16 ? 0 : y < 28 ? 1 : 2;
+          let k = y < 16 ? 0 : y < 30 ? 1 : 2;
           if (x < 5) k = Math.max(0, k - 1);
           if (x > w - 6) k += 1;
-          if ((x + y) % 9 === 0 && y > 16) k += 1;
+          if (y === 15) k = 0; // lit front edge of the slab
           p.set(x, y, STONE[Math.min(5, k)]);
         }
       p.rect(2, 38, w - 4, 2, "#00bfff"); // deep-sky accent band
@@ -265,7 +311,13 @@ export function makeBuildings(scene: Phaser.Scene): Record<string, BuildingArt> 
         }
       // front wall with the big tank on both sides of the entrance
       for (let y = 41; y < h - 2; y++)
-        for (let x = 2; x < w - 2; x++) p.set(x, y, STONE[x < 6 ? 1 : x > w - 7 ? 4 : 2]);
+        for (let x = 2; x < w - 2; x++) {
+          let k = y < 50 ? 1 : y < h - 12 ? 2 : 3;
+          if (x < 6) k -= 1;
+          if (x > w - 7) k += 1;
+          if (y >= h - 5) k = 5; // dark plinth
+          p.set(x, y, STONE[Math.max(0, k)]);
+        }
       const tank = (x0: number, x1: number) => {
         const y0 = 46;
         const y1 = h - 8;
@@ -281,11 +333,7 @@ export function makeBuildings(scene: Phaser.Scene): Record<string, BuildingArt> 
         for (let f = 0; f < 5; f++) {
           const fx = x0 + 4 + Math.floor(hash(f, x0, 5) * (x1 - x0 - 10));
           const fy = y0 + 5 + Math.floor(hash(f, x0, 6) * (y1 - y0 - 12));
-          const col = TIER_FISH[f % TIER_FISH.length];
-          p.rect(fx, fy, 5, 3, col);
-          p.set(fx + 5, fy, col);
-          p.set(fx + 5, fy + 2, col);
-          p.set(fx + 1, fy + 1, INK);
+          tinyFish(p, fx, fy, TIER_FISH[f % TIER_FISH.length], f % 2 === 1);
         }
         for (let b = 0; b < 4; b++) p.set(x0 + 3 + b * 9, y0 + 3 + ((b * 7) % 14), "#ffffff");
         p.rect(x0, y1 - 3, x1 - x0, 3, "#e2ba79"); // sand floor
@@ -341,16 +389,17 @@ export function makePalm(scene: Phaser.Scene, key: string, lean: number) {
         const t = s / len;
         const x = topX + Math.cos(rad) * s;
         const y = topY + Math.sin(rad) * s * 0.55 + t * t * 14; // droop
-        const thick = t < 0.3 ? 2 : t < 0.75 ? 1 : 0;
-        for (let o = -thick; o <= thick; o++) {
-          const k = o < 0 ? 1 : o > 0 ? 3 : 2;
-          p.set(x, y + o, LEAF[t > 0.8 ? k + 1 : k]);
+        const thick = t < 0.35 ? 2 : t < 0.8 ? 1 : 0;
+        for (let o = -thick - 1; o <= thick + 1; o++) {
+          const k = o < -thick ? 0 : o < 0 ? 1 : o === 0 ? 2 : o <= thick ? 3 : 5;
+          if (o > thick && t < 0.12) continue;
+          p.set(x, y + o, LEAF[t > 0.85 ? Math.min(5, k + 1) : k]);
         }
-        if (s % 2 === 0 && t > 0.15) {
-          p.set(x, y + thick + 1, LEAF[4]); // leaflets
-          if (t < 0.85) p.set(x, y + thick + 2, LEAF[5]);
+        if (t > 0.15) {
+          // leaflets hang below the rib in a sawtooth, darkest at their tips
+          const len = s % 2 === 0 ? 3 : 2;
+          for (let j = 1; j <= len; j++) p.set(x - (j > 1 ? Math.sign(Math.cos(rad)) : 0), y + thick + 1 + j, LEAF[j === len ? 5 : 4]);
         }
-        if (s % 3 === 0 && t > 0.2) p.set(x, y - thick - 1, LEAF[0]);
       }
     }
     // coconuts

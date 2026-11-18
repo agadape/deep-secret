@@ -6,12 +6,12 @@ import { TIERS, TIER, type Fish } from "../fish";
  * Only the two style-lock fish exist so far (HANDOFF §9: prove one fish in game before producing all 19).
  */
 const SPRITES: Record<string, { w: number; h: number }[]> = {
-  "teri-ngantuk": [{ w: 40, h: 19 }],
+  "teri-ngantuk": [{ w: 40, h: 22 }],
   "raja-abyss": [
-    { w: 128, h: 54 },
-    { w: 96, h: 40 },
-    { w: 64, h: 27 },
-    { w: 48, h: 20 },
+    { w: 128, h: 57 },
+    { w: 96, h: 44 },
+    { w: 64, h: 30 },
+    { w: 48, h: 24 },
   ],
 };
 

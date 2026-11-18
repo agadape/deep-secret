@@ -19,9 +19,9 @@ export const WATER = [
   "#f2fcff", "#b6f1f2", "#6fe3e2", "#35cfe2", "#14b8ec", "#0aa2de", "#0b88c6",
   "#0b6eaa", "#0b558c", "#0a3f6f", "#082e55", "#07203f", "#06162d",
 ];
-const SAND = ["#fff4d8", "#f8e3b2", "#efd092", "#e2ba79", "#cfa165", "#b38350", "#8f653e"];
-const GRASS = ["#c8ee8a", "#a3d96e", "#80c457", "#62a847", "#488a3b", "#356b32"];
-const WOOD = ["#f3c88f", "#dba36a", "#bb814c", "#96623b", "#70472c", "#4b2f20"];
+const SAND = ["#fff4d8", "#f8e3b2", "#efd092", "#e2ba79", "#cfa165", "#a9876a", "#7c6a5e"]; // shadows cool toward grey-violet
+const GRASS = ["#c8ee8a", "#a3d96e", "#80c457", "#5fa64c", "#43874a", "#2f6744"];
+const WOOD = ["#f3c88f", "#dba36a", "#bb814c", "#8f633f", "#654635", "#3f302e"];
 const CORAL = ["#ff9a7a", "#ffbe63", "#f2708a", "#ffd9a0"];
 const FLOWER = ["#ff8fb3", "#ffe270", "#ffffff"];
 export const DEEPEST = WATER[WATER.length - 1];
@@ -171,7 +171,8 @@ const waterIndex = (d: number) => {
 /** Dock rectangle in canvas pixels (world pixels + paint offset). */
 const DOCK = { x0: 29 * TILE + PAINT_OX, x1: 31 * TILE + PAINT_OX, y0: 31 * TILE + PAINT_OY, y1: 38 * TILE + PAINT_OY };
 
-export function paintTerrain(): HTMLCanvasElement {
+/** Pure pixel painter (no DOM), so the same code runs in the browser and in scripts/bake-terrain.mjs. */
+export function paintTerrainPixels(): { width: number; height: number; data: Uint8ClampedArray } {
   const landTiles = (t: Terrain) => t === "sand" || t === "grass" || t === "building";
   const landSoft = blur(mask(landTiles), 5);
   const grassSoft = blur(mask((t) => t === "grass" || t === "building"), 8);
@@ -201,12 +202,7 @@ export function paintTerrain(): HTMLCanvasElement {
   for (let y = DOCK.y0; y < DOCK.y1; y++) for (let x = DOCK.x0; x < DOCK.x1; x++) dockMask[y * W + x] = 1;
   const toDock = distance(dockMask);
 
-  const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext("2d")!;
-  const img = ctx.createImageData(W, H);
-  const out = img.data;
+  const out = new Uint8ClampedArray(W * H * 4);
   const cache = new Map<string, [number, number, number]>();
   const put = (i: number, hex: string) => {
     let c = cache.get(hex);
@@ -224,7 +220,7 @@ export function paintTerrain(): HTMLCanvasElement {
       if (!land[i]) {
         // ---- sea ----
         const d = Math.min(toLand[i], toDock[i] * 1.2 + 26);
-        const wobble = d < 9 ? (vnoise(x, y, 5, 3) - 0.5) * 2.2 : (vnoise(x, y, 18, 4) - 0.5) * 16;
+        const wobble = d < 9 ? (vnoise(x, y, 5, 3) - 0.5) * 2.2 : (vnoise(x, y, 18, 4) - 0.5) * 12;
         let k = waterIndex(d + wobble);
         if (d > 9) k += Math.round(trenchSoft[i] * 2.6) - Math.round(reefSoft[i] * 1.4);
         // second, broken wave line just off the beach
@@ -233,9 +229,10 @@ export function paintTerrain(): HTMLCanvasElement {
         if (!inDock(x, y) && inDock(x - 3, y - 4)) k += 2;
         k = Math.max(0, Math.min(WATER.length - 1, k));
         // caustic cells: strong in the shallows, broken further out, gone in the deep
-        if (k >= 2 && k <= 9) {
-          const e = cellEdge(x + vnoise(x, y, 23, 7) * 6, y, k <= 4 ? 11 : 15);
-          if (e < (k <= 6 ? 1.05 : 0.8) && (k <= 6 || hash(x, y, 8) > 0.45)) k -= 1;
+        if (k >= 2 && k <= 11) {
+          const e = cellEdge(x + vnoise(x, y, 23, 7) * 6, y, k <= 4 ? 11 : k <= 9 ? 15 : 19);
+          const keep = k <= 6 ? 1 : k <= 9 ? 0.45 : 0.85; // caustics thin out with depth but never vanish
+          if (e < (k <= 6 ? 1.05 : 0.8) && (k <= 6 || hash(x, y, 8) > keep)) k -= 1;
         }
         let hex = WATER[k];
         // reef: coral clusters seen through the water
@@ -270,7 +267,9 @@ export function paintTerrain(): HTMLCanvasElement {
       // small tufts on a loose 6 px lattice: lit tip, two side blades, a shadow under the tip
       const cx = Math.floor(x / 6);
       const cy = Math.floor(y / 6);
-      if (hash(cx, cy, 21) > 0.5) {
+      // tufts cluster along the edges of the darker patches, sparse elsewhere
+      const patchEdge = Math.abs(vnoise(cx * 6 + 3, cy * 6 + 3, 34, 19) - 0.62) < 0.05;
+      if (hash(cx, cy, 21) > (patchEdge ? 0.1 : 0.6)) {
         const dx = x - (cx * 6 + 1 + Math.floor(hash(cx, cy, 25) * 4));
         const dy = y - (cy * 6 + 1 + Math.floor(hash(cx, cy, 26) * 3));
         if (dx === 0 && dy === 0) k = 0;
@@ -285,7 +284,16 @@ export function paintTerrain(): HTMLCanvasElement {
     }
 
   paintDock((x, y, hex) => put(y * W + x, hex));
-  ctx.putImageData(img, 0, 0);
+  return { width: W, height: H, data: out };
+}
+
+/** Browser fallback when the baked public/terrain.png is missing: paint at runtime (±0.2-0.4 s on a laptop). */
+export function paintTerrain(): HTMLCanvasElement {
+  const { width, height, data } = paintTerrainPixels();
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d")!.putImageData(new ImageData(data as Uint8ClampedArray<ArrayBuffer>, width, height), 0, 0);
   return canvas;
 }
 

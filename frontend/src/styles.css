@@ -439,4 +439,6 @@ input {
   image-rendering: pixelated;
   display: block;
   margin: 0 auto;
+  max-width: 100%; /* very narrow phones: shrink rather than overflow the card */
+  height: auto;
 }
