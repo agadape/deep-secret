@@ -53,6 +53,39 @@ const LEGS = [
   "...oooo....oooo.",
 ];
 
+/** Walking frames: one foot lifted a pixel, the other planted. B lifts the left foot, C the right. */
+const LEGS_B = [
+  "...oKKccccccCo..",
+  "...oKcccccccCo..",
+  "...oKccCoCccCo..",
+  "...ocCCo.oCCco..",
+  "....oSso..osSo..",
+  "...onnno..okso..",
+  "...oooo...onnno.",
+  "...........oooo.",
+];
+const LEGS_C = [
+  "...oKKccccccCo..",
+  "...oKcccccccCo..",
+  "...oKccCoCccCo..",
+  "...ocCCo.oCCco..",
+  "....oSso..osSo..",
+  "....oSko..onnno.",
+  "...onnno...oooo.",
+  "...oooo.........",
+];
+const SIDE_STEP = [
+  "....oKKccccCo...",
+  "....oKccccCCo...",
+  "....oKcCCCCCo...",
+  "....ocCCCCCo....",
+  ".....oSsSko.....",
+  ".....oSkSko.....",
+  ".....onnnnno....",
+  ".....ooooooo....",
+];
+const swapLegs = (rows: string[], legs: string[]) => [...rows.slice(0, rows.length - legs.length), ...legs];
+
 const FRONT = [
   ...HAT,
   ".oRRrrrrrrrrRRo.",
@@ -199,6 +232,8 @@ function glow(scene: Phaser.Scene, key: string, r: number, color: [number, numbe
 }
 
 export const AVATAR_VIEWS = ["front", "back", "side"] as const;
+/** Walk cycle per view: planted, left foot up, planted, right foot up (side: apart, together). */
+export const WALK_FRAMES = ["", "-b", "", "-c"] as const;
 export type AvatarView = (typeof AVATAR_VIEWS)[number];
 export const avatarKey = (shirt: number, view: AvatarView) => `av${shirt}-${view}`;
 
@@ -208,6 +243,12 @@ export function makeSprites(scene: Phaser.Scene) {
     paint(scene, avatarKey(i, "front"), FRONT, pal);
     paint(scene, avatarKey(i, "back"), BACK, pal);
     paint(scene, avatarKey(i, "side"), SIDE, pal);
+    paint(scene, avatarKey(i, "front") + "-b", swapLegs(FRONT, LEGS_B), pal);
+    paint(scene, avatarKey(i, "front") + "-c", swapLegs(FRONT, LEGS_C), pal);
+    paint(scene, avatarKey(i, "back") + "-b", swapLegs(BACK, LEGS_B), pal);
+    paint(scene, avatarKey(i, "back") + "-c", swapLegs(BACK, LEGS_C), pal);
+    paint(scene, avatarKey(i, "side") + "-b", swapLegs(SIDE, SIDE_STEP), pal);
+    paint(scene, avatarKey(i, "side") + "-c", swapLegs(SIDE, SIDE_STEP), pal);
   });
   paint(scene, "silhouette", SILHOUETTE, { "#": "#0c0a16" });
   paint(scene, "bobber", BOBBER, { o: OUT, W: "#ffffff", R: "#ff5a4f", r: "#c2362f" });

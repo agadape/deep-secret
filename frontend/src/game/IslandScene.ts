@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { emit, on, pad, type Anim, type Dir, type RemotePlayer } from "./bus";
 import { BUILDINGS, GRID, SPAWN, TILE, WORLD_H, WORLD_W, fishingZoneAt, nearestBuilding, terrainAt, walkable } from "./map";
 import { PAL, makeTextures } from "./textures";
-import { SHIRT_RAMPS, avatarKey, makeSprites } from "./sprites";
+import { SHIRT_RAMPS, WALK_FRAMES, avatarKey, makeSprites } from "./sprites";
 import { makeBuildings, makeBush, makePalm, makeRock } from "./props";
 import { PAINT_OX, PAINT_OY, paintTerrain } from "./terrainArt";
 
@@ -69,9 +69,10 @@ class AvatarView {
     const { x, y } = this.sprite;
     const walking = this.anim === "walk";
     const view = this.dir === "up" ? "back" : this.dir === "down" ? "front" : "side";
-    this.sprite.setTexture(avatarKey(this.shirt, view)).setFlipX(this.dir === "left");
-    // a 1 px step bob instead of rotating the sprite, which would break the pixel grid
-    const step = walking && Math.floor(time / 140) % 2 === 1 ? 1 : 0;
+    const frame = walking ? WALK_FRAMES[Math.floor(time / 140) % WALK_FRAMES.length] : "";
+    this.sprite.setTexture(avatarKey(this.shirt, view) + frame).setFlipX(this.dir === "left");
+    // a 1 px bob on the lifted-foot frames instead of rotating the sprite, which would break the pixel grid
+    const step = frame ? 1 : 0;
     this.sprite.setOrigin(0.5, 1 + step / AVATAR_H).setDepth(depthAt(y));
     this.shadow.setPosition(x, y);
     this.label.setPosition(x, y - AVATAR_H - 1);
