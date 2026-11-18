@@ -7,18 +7,33 @@ import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import { createPublicClient, http, parseAbi, verifyMessage } from "viem";
 import { sepolia } from "viem/chains";
+import { createDrip } from "./drip.mjs";
+
+try {
+  process.loadEnvFile(new URL("./.env", import.meta.url));
+} catch {
+  // no .env: presence only, gas drip disabled
+}
 
 const PORT = Number(process.env.PORT ?? 8787);
 const ROOM_CAP = Number(process.env.ROOM_CAP ?? 30);
 const TICK_MS = 100; // 10 Hz snapshots
 const WORLD = { w: 960, h: 540 };
-const GAME = process.env.GAME_ADDRESS ?? "0x2C253892D001ed11A773a88f749358ff9Ea9442C"; // DeepSecretGame on Sepolia
+const GAME = process.env.GAME_ADDRESS ?? "0x6da1646B1cA6f41Ee163b77E290482d6B055799d"; // DeepSecretGame on Sepolia
 const RPC = process.env.SEPOLIA_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com";
 // Animation states carry no catch information: everyone's catch looks the same to others (ART_BIBLE Addendum A2).
 const ANIMS = new Set(["idle", "walk", "cast", "fishing", "reel", "hold_unknown", "snatch", "flex"]);
 const DIRS = new Set(["up", "down", "left", "right"]);
 const EMOTES = new Set(["wave", "cool", "cry", "shh", "laugh"]);
 const MAX_MSGS_PER_SEC = 30;
+
+const drip = createDrip({
+  privateKey: process.env.DRIP_PRIVATE_KEY,
+  rpc: process.env.SEPOLIA_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com",
+  amountEth: process.env.DRIP_AMOUNT_ETH,
+  dailyBudgetEth: process.env.DRIP_DAILY_BUDGET_ETH,
+});
+const CORS = { "access-control-allow-origin": process.env.ALLOWED_ORIGIN ?? "*", "access-control-allow-headers": "content-type" };
 
 const loginMessage = (nonce) => `Deep Secret — masuk ke pulau\n\nTanda tangan ini gratis dan tidak mengirim transaksi.\nNonce: ${nonce}`;
 
@@ -43,7 +58,34 @@ const publicView = (p) => ({ id: p.id, name: p.name, x: p.x, y: p.y, dir: p.dir,
 
 // Static test page, served with the same isolation headers the game will use.
 const page = readFileSync(new URL("./public/index.html", import.meta.url));
-const httpServer = createServer((req, res) => {
+const httpServer = createServer(async (req, res) => {
+  if (req.url === "/drip") {
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, { ...CORS, "access-control-allow-methods": "POST" });
+      return res.end();
+    }
+    const reply = (code, body) => {
+      res.writeHead(code, { ...CORS, "content-type": "application/json" });
+      res.end(JSON.stringify(body));
+    };
+    if (req.method !== "POST") return reply(405, { status: "post_only" });
+    if (!drip) return reply(503, { status: "drip_disabled" });
+    let body = "";
+    for await (const chunk of req) {
+      body += chunk;
+      if (body.length > 512) return reply(413, { status: "too_large" });
+    }
+    try {
+      const { address } = JSON.parse(body || "{}");
+      const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
+      const [code, out] = await drip.request(String(address ?? ""), ip);
+      console.log(`[drip] ${address} → ${out.status}${out.tx ? " " + out.tx : ""}`);
+      return reply(code, out);
+    } catch (e) {
+      console.error(`[drip] error ${e.shortMessage ?? e.message}`);
+      return reply(500, { status: "error" });
+    }
+  }
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ rooms: [...rooms.values()].map((r) => ({ id: r.id, players: r.players.size })) }));
@@ -167,4 +209,8 @@ chain.watchContractEvent({
   onError: (e) => console.error(`[chain] ${e.shortMessage ?? e.message}`),
 });
 
-httpServer.listen(PORT, () => console.log(`rt-spike listening on http://localhost:${PORT} (ws path /ws), room cap ${ROOM_CAP}`));
+httpServer.listen(PORT, () =>
+  console.log(
+    `rt-spike listening on http://localhost:${PORT} (ws /ws, POST /drip), room cap ${ROOM_CAP}, drip ${drip ? "from " + drip.from : "disabled"}`,
+  ),
+);

@@ -54,6 +54,12 @@ contract DeepSecretGame is ZamaEthereumConfig {
         ebool upgradePaid;
     }
 
+    /// @dev A short-lived key that may play on the player's behalf, so the wallet signs once per session.
+    struct Session {
+        address key;
+        uint64 expiresAt;
+    }
+
     struct Odds {
         uint32 secret;
         uint32 legend;
@@ -68,6 +74,8 @@ contract DeepSecretGame is ZamaEthereumConfig {
     uint8 public constant ZONES = 3; // 0 Dermaga, 1 Karang, 2 Palung
     uint256 public constant MAX_SELL = 40;
     uint8 public constant MAX_NAME_BYTES = 16;
+    uint64 public constant MAX_SESSION = 7 days;
+    uint256 public constant SESSION_SHARE_LIMIT = 40; // newest bucket fish shared with a new key
 
     uint8 public constant STATE_EMBER = 0;
     uint8 public constant STATE_SOLD = 1;
@@ -93,6 +101,8 @@ contract DeepSecretGame is ZamaEthereumConfig {
     mapping(address => uint256[]) private _fishIds;
     mapping(address => PlayerState) private _players;
     mapping(address => string) public names;
+    mapping(address player => Session) private _sessions;
+    mapping(address key => address player) public playerOfKey;
 
     // ---------------------------------------------------------------- events
 
@@ -113,6 +123,8 @@ contract DeepSecretGame is ZamaEthereumConfig {
         uint32 serial
     );
     event FlexRejected(address indexed player, uint256 indexed fishId);
+    event SessionAuthorized(address indexed player, address indexed key, uint64 expiresAt, uint256 sharedFish);
+    event SessionRevoked(address indexed player, address indexed key);
     event SeasonEndRequested(uint32 season, bytes32 secretsLeftHandle);
     event SeasonEnded(uint32 season, uint8 secretsLeft, uint8 secretsCaught, uint32 secretsFlexed);
 
@@ -130,6 +142,8 @@ contract DeepSecretGame is ZamaEthereumConfig {
     error NoUpgradePending();
     error MaxRod();
     error BadName();
+    error BadSession();
+    error SessionExpired(address key);
 
     // ---------------------------------------------------------------- setup
 
@@ -145,21 +159,54 @@ contract DeepSecretGame is ZamaEthereumConfig {
 
     // ---------------------------------------------------------------- player actions
 
+    /// @notice Let `key` play for you until `expiresAt`: cast, sell, upgrade and flex without a wallet popup.
+    ///         Fish, coins and NFTs stay yours. The key gets read access to your newest bucket fish and to your
+    ///         balance, and any ETH sent along is forwarded to it for gas.
+    function authorizeSession(address key, uint64 expiresAt) external payable {
+        if (key == address(0) || key == msg.sender || key.code.length != 0) revert BadSession();
+        if (playerOfKey[msg.sender] != address(0)) revert BadSession(); // a session key cannot own sessions
+        if (expiresAt <= block.timestamp || expiresAt > block.timestamp + MAX_SESSION) revert BadSession();
+        address current = playerOfKey[key];
+        if (current != address(0) && current != msg.sender) revert BadSession();
+        Session storage old = _sessions[msg.sender];
+        if (old.key != address(0) && old.key != key) delete playerOfKey[old.key];
+        _sessions[msg.sender] = Session({key: key, expiresAt: expiresAt});
+        playerOfKey[key] = msg.sender;
+
+        uint256 shared = _shareBucket(msg.sender, key);
+        coin.shareBalance(msg.sender, key);
+        if (msg.value > 0) {
+            (bool ok, ) = key.call{value: msg.value}("");
+            require(ok, "gas forward failed");
+        }
+        emit SessionAuthorized(msg.sender, key, expiresAt, shared);
+    }
+
+    function revokeSession() external {
+        Session memory sn = _sessions[msg.sender];
+        if (sn.key == address(0)) revert BadSession();
+        delete playerOfKey[sn.key];
+        delete _sessions[msg.sender];
+        emit SessionRevoked(msg.sender, sn.key);
+    }
+
     function claimStarter() external {
-        PlayerState storage p = _players[msg.sender];
+        address who = _actor();
+        PlayerState storage p = _players[who];
         if (p.starterClaimed) revert AlreadyClaimed();
         p.starterClaimed = true;
         euint64 amount = FHE.asEuint64(_cfg.starterAmount);
         FHE.allowTransient(amount, address(coin));
-        coin.mint(msg.sender, amount);
-        emit StarterClaimed(msg.sender);
+        coin.mint(who, amount);
+        emit StarterClaimed(who);
     }
 
     function setName(string calldata name) external {
         uint256 len = bytes(name).length;
         if (len == 0 || len > MAX_NAME_BYTES) revert BadName();
-        names[msg.sender] = name;
-        emit NameSet(msg.sender, name);
+        address who = _actor();
+        names[who] = name;
+        emit NameSet(who, name);
     }
 
     /// @notice Pay one bait and roll five encrypted fish. A short balance does not revert: the five fish become
@@ -167,36 +214,21 @@ contract DeepSecretGame is ZamaEthereumConfig {
     function cast(uint8 zoneId) external returns (uint256 first) {
         _requireOpen();
         if (zoneId >= ZONES) revert BadZone();
-        PlayerState storage p = _players[msg.sender];
+        address who = _actor();
+        PlayerState storage p = _players[who];
         uint8 required = zoneMinRod(zoneId);
         if (p.rodLevel < required) revert RodTooWeak(required);
         Odds memory o = oddsFor(p.rodLevel, zoneId);
 
-        ebool paid = _charge(msg.sender, _cfg.baitPrice);
-        ebool allowed = FHE.and(FHE.gt(_secretsLeft, 0), paid);
-
-        euint32[5] memory r;
-        ebool[5] memory wantsSecret;
-        euint8[5] memory ones;
-        for (uint8 i = 0; i < FISH_PER_CAST; i++) {
-            r[i] = FHE.randEuint32();
-            wantsSecret[i] = FHE.and(FHE.lt(r[i], o.secret), allowed);
-            ones[i] = FHE.select(wantsSecret[i], FHE.asEuint8(1), FHE.asEuint8(0));
-        }
-        // tree sum keeps the sequential FHE depth low (SPIKE_LOG S7, S17)
-        euint8 n = FHE.add(FHE.add(FHE.add(ones[0], ones[1]), FHE.add(ones[2], ones[3])), ones[4]);
-        ebool overflow = FHE.gt(n, _secretsLeft);
-        _secretsLeft = FHE.select(overflow, _secretsLeft, FHE.sub(_secretsLeft, n));
-        FHE.allowThis(_secretsLeft);
-        ebool keep = FHE.not(overflow);
-
+        ebool paid = _charge(who, _cfg.baitPrice);
+        (euint32[5] memory r, ebool[5] memory secret) = _rollSecrets(o.secret, paid);
         first = _fish.length;
         for (uint8 i = 0; i < FISH_PER_CAST; i++) {
-            _rollFish(o, r[i], FHE.and(wantsSecret[i], keep), paid);
+            _rollFish(o, r[i], secret[i], paid, who);
         }
         p.castCount += 1;
         p.emberCount += FISH_PER_CAST;
-        emit Cast(msg.sender, zoneId, first);
+        emit Cast(who, zoneId, first);
     }
 
     /// @notice Sell fish from your bucket. The payout is the encrypted sum of their prices; nobody sees it.
@@ -204,9 +236,10 @@ contract DeepSecretGame is ZamaEthereumConfig {
     function sell(uint256[] calldata fishIds) external {
         uint256 count = fishIds.length;
         if (count == 0 || count > MAX_SELL) revert BadSellCount();
+        address who = _actor();
         euint64[] memory vals = new euint64[](count);
         for (uint256 i = 0; i < count; i++) {
-            Fish storage f = _ownedFish(fishIds[i]);
+            Fish storage f = _ownedFish(fishIds[i], who);
             if (f.state != STATE_EMBER) revert WrongState(fishIds[i], f.state);
             f.state = STATE_SOLD;
             vals[i] = f.price;
@@ -220,22 +253,23 @@ contract DeepSecretGame is ZamaEthereumConfig {
             n = half + (n % 2);
         }
         FHE.allowTransient(vals[0], address(coin));
-        coin.mint(msg.sender, vals[0]);
-        _players[msg.sender].emberCount -= uint32(count);
-        emit Sold(msg.sender, count);
+        coin.mint(who, vals[0]);
+        _players[who].emberCount -= uint32(count);
+        emit Sold(who, count);
     }
 
     /// @notice Step 1 of a rod upgrade: pay under encryption, then the "paid" bit is opened for public decryption.
     function requestRodUpgrade() external {
-        PlayerState storage p = _players[msg.sender];
+        address who = _actor();
+        PlayerState storage p = _players[who];
         if (p.upgradePending) revert UpgradePending();
         if (p.rodLevel >= MAX_ROD_LEVEL) revert MaxRod();
-        ebool paid = _charge(msg.sender, _cfg.rodPrices[p.rodLevel]);
+        ebool paid = _charge(who, _cfg.rodPrices[p.rodLevel]);
         FHE.allowThis(paid);
         FHE.makePubliclyDecryptable(paid);
         p.upgradePending = true;
         p.upgradePaid = paid;
-        emit RodUpgradeRequested(msg.sender, p.rodLevel + 1, FHE.toBytes32(paid));
+        emit RodUpgradeRequested(who, p.rodLevel + 1, FHE.toBytes32(paid));
     }
 
     /// @notice Step 2 (anyone can submit): verify the KMS-signed "paid" bit and raise the public rod level if paid.
@@ -253,12 +287,13 @@ contract DeepSecretGame is ZamaEthereumConfig {
 
     /// @notice Step 1 of showing off a fish: its packed attributes become publicly decryptable.
     function flex(uint256 fishId) external {
-        Fish storage f = _ownedFish(fishId);
+        address who = _actor();
+        Fish storage f = _ownedFish(fishId, who);
         if (f.state != STATE_EMBER) revert WrongState(fishId, f.state);
         f.state = STATE_FLEX_PENDING;
-        _players[msg.sender].emberCount -= 1;
+        _players[who].emberCount -= 1;
         FHE.makePubliclyDecryptable(f.packed);
-        emit FlexRequested(msg.sender, fishId, FHE.toBytes32(f.packed));
+        emit FlexRequested(who, fishId, FHE.toBytes32(f.packed));
     }
 
     /// @notice Step 2 (anyone can submit): verify the KMS proof. A Secret becomes a 1-of-1 NFT and goes to the
@@ -354,6 +389,16 @@ contract DeepSecretGame is ZamaEthereumConfig {
         o.rare = uint32(c);
     }
 
+    function sessionOf(address who) external view returns (Session memory) {
+        return _sessions[who];
+    }
+
+    /// @notice The key currently allowed to play for `who`, or zero. PearlCoin uses it to share balance reads.
+    function activeKeyOf(address who) external view returns (address) {
+        Session memory sn = _sessions[who];
+        return sn.expiresAt > block.timestamp ? sn.key : address(0);
+    }
+
     function player(address who) external view returns (PlayerState memory) {
         return _players[who];
     }
@@ -381,12 +426,52 @@ contract DeepSecretGame is ZamaEthereumConfig {
         if (seasonEndRequested || block.timestamp >= _cfg.endsAt) revert SeasonClosed();
     }
 
-    function _ownedFish(uint256 fishId) private view returns (Fish storage f) {
-        f = _fish[fishId];
-        if (f.owner != msg.sender) revert NotYourFish(fishId);
+    /// @dev The player this call acts for: the caller, or the player whose session key is the caller.
+    ///      An expired key reverts instead of silently acting as its own empty account.
+    function _actor() private view returns (address) {
+        address owner_ = playerOfKey[msg.sender];
+        if (owner_ == address(0)) return msg.sender;
+        if (_sessions[owner_].expiresAt <= block.timestamp) revert SessionExpired(msg.sender);
+        return owner_;
     }
 
-    /// @dev Burns `amount` coins; returns an encrypted "paid in full" bit instead of reverting on a short balance.
+    function _ownedFish(uint256 fishId, address who) private view returns (Fish storage f) {
+        f = _fish[fishId];
+        if (f.owner != who) revert NotYourFish(fishId);
+    }
+
+    /// @dev Give a new session key read access to the newest fish still in the bucket (bounded for gas).
+    function _shareBucket(address who, address key) private returns (uint256 shared) {
+        uint256[] storage ids = _fishIds[who];
+        for (uint256 i = ids.length; i > 0 && shared < SESSION_SHARE_LIMIT; i--) {
+            Fish storage f = _fish[ids[i - 1]];
+            if (f.state != STATE_EMBER && f.state != STATE_FLEX_PENDING) continue;
+            FHE.allow(f.packed, key);
+            FHE.allow(f.price, key);
+            shared++;
+        }
+    }
+
+/// @dev Five random draws and which of them may become Secret, enforcing the hidden quota under encryption.
+    ///      A tree sum keeps the sequential FHE depth low (SPIKE_LOG S7, S17); if the batch would overflow the quota,
+    ///      none of its Secret rolls count and they fall back to Legenda.
+    function _rollSecrets(uint32 secretThreshold, ebool paid) private returns (euint32[5] memory r, ebool[5] memory secret) {
+        ebool allowed = FHE.and(FHE.gt(_secretsLeft, 0), paid);
+        euint8[5] memory ones;
+        for (uint8 i = 0; i < FISH_PER_CAST; i++) {
+            r[i] = FHE.randEuint32();
+            secret[i] = FHE.and(FHE.lt(r[i], secretThreshold), allowed);
+            ones[i] = FHE.select(secret[i], FHE.asEuint8(1), FHE.asEuint8(0));
+        }
+        euint8 n = FHE.add(FHE.add(FHE.add(ones[0], ones[1]), FHE.add(ones[2], ones[3])), ones[4]);
+        ebool overflow = FHE.gt(n, _secretsLeft);
+        _secretsLeft = FHE.select(overflow, _secretsLeft, FHE.sub(_secretsLeft, n));
+        FHE.allowThis(_secretsLeft);
+        ebool keep = FHE.not(overflow);
+        for (uint8 i = 0; i < FISH_PER_CAST; i++) secret[i] = FHE.and(secret[i], keep);
+    }
+
+        /// @dev Burns `amount` coins; returns an encrypted "paid in full" bit instead of reverting on a short balance.
     function _charge(address from, uint64 amount) private returns (ebool paid) {
         euint64 a = FHE.asEuint64(amount);
         FHE.allowTransient(a, address(coin));
@@ -394,7 +479,7 @@ contract DeepSecretGame is ZamaEthereumConfig {
         paid = FHE.eq(burned, amount);
     }
 
-    function _rollFish(Odds memory o, euint32 r, ebool isSecret, ebool paid) private {
+    function _rollFish(Odds memory o, euint32 r, ebool isSecret, ebool paid, address who) private {
         ebool isLegend = FHE.lt(r, o.legend);
         ebool isEpic = FHE.lt(r, o.epic);
         ebool isRare = FHE.lt(r, o.rare);
@@ -419,16 +504,22 @@ contract DeepSecretGame is ZamaEthereumConfig {
         price = FHE.select(paid, price, FHE.asEuint64(0));
 
         FHE.allowThis(packed);
-        FHE.allow(packed, msg.sender);
+        FHE.allow(packed, who);
         FHE.allowThis(price);
-        FHE.allow(price, msg.sender);
+        FHE.allow(price, who);
         FHE.allowThis(isSecret);
-        FHE.allow(isSecret, msg.sender);
+        FHE.allow(isSecret, who);
+        if (msg.sender != who) {
+            // a session key cast this: let it read the catch (the tier inside `packed` already says Secret or not;
+            // every extra ACL entry is a new storage slot, which is expensive on Sepolia today)
+            FHE.allow(packed, msg.sender);
+            FHE.allow(price, msg.sender);
+        }
 
-        _fishIds[msg.sender].push(_fish.length);
+        _fishIds[who].push(_fish.length);
         _fish.push(
             Fish({
-                owner: msg.sender,
+                owner: who,
                 season: _cfg.number,
                 caughtAt: uint64(block.timestamp),
                 packed: packed,

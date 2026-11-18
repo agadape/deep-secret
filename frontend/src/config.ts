@@ -15,7 +15,7 @@ export const FEES = { maxFeePerGas: 200_000n, maxPriorityFeePerGas: 100_000n } a
 export const GAS = {
   claimStarter: 1_500_000n,
   setName: 300_000n,
-  cast: 12_500_000n,
+  cast: 15_000_000n, // a session-key cast measured 13.2M on Sepolia (new storage slots are expensive)
   sell: 4_000_000n,
   requestRodUpgrade: 2_000_000n,
   finalize: 1_000_000n,

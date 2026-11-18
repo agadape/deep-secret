@@ -6,6 +6,11 @@ import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {ERC7984} from "@openzeppelin/confidential-contracts/token/ERC7984/ERC7984.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
+/// @notice Minimal view of the game's session directory.
+interface ISessionDirectory {
+    function activeKeyOf(address player) external view returns (address);
+}
+
 /// @title PearlCoin — Deep Secret's in-game currency ("Koin Mutiara").
 /// @notice ERC-7984 confidential token: every balance and amount is encrypted and readable only by its holder.
 ///         Only the game contract can mint (sell catches, starter pack) or burn (bait, rod upgrades).
@@ -42,5 +47,25 @@ contract PearlCoin is ZamaEthereumConfig, ERC7984, Ownable {
     function burn(address from, euint64 amount) external onlyGame returns (euint64 burned) {
         burned = _burn(from, amount);
         FHE.allowTransient(burned, msg.sender);
+    }
+
+    /// @notice Lets a player's freshly authorized session key read the current balance.
+    function shareBalance(address account, address key) external onlyGame {
+        euint64 balance = confidentialBalanceOf(account);
+        if (FHE.isInitialized(balance)) FHE.allow(balance, key);
+    }
+
+    /// @dev Every new balance handle is also readable by the holder's live session key, so the HUD can show the
+    ///      balance without a wallet signature during a session.
+    function _update(address from, address to, euint64 amount) internal override returns (euint64 transferred) {
+        transferred = super._update(from, to, amount);
+        _shareWithSessionKey(from);
+        _shareWithSessionKey(to);
+    }
+
+    function _shareWithSessionKey(address account) private {
+        if (account == address(0) || game == address(0)) return;
+        address key = ISessionDirectory(game).activeKeyOf(account);
+        if (key != address(0)) FHE.allow(confidentialBalanceOf(account), key);
     }
 }

@@ -1,6 +1,7 @@
 import { FhevmType } from "@fhevm/hardhat-plugin";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { time } from "@nomicfoundation/hardhat-network-helpers";
+import { anyUint } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import { ethers, fhevm } from "hardhat";
 import { DeepSecretGame, PearlCoin, SecretFishNFT } from "../types";
@@ -362,6 +363,129 @@ describe("DeepSecretGame", function () {
       const { proof } = await publicProof((await ctx.game.getFish(plain.id)).packed);
       const forged = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [(1n << 16n) | 4n]);
       await expect(ctx.game.finalizeFlex(plain.id, forged, proof)).to.be.reverted;
+    });
+  });
+
+  describe("session keys (one wallet confirmation per session)", function () {
+    async function newKey() {
+      return ethers.Wallet.createRandom().connect(ethers.provider);
+    }
+    async function authorize(ctx: Ctx, who: HardhatEthersSigner, key: { address: string }, seconds = 3600) {
+      const expiresAt = (await time.latest()) + seconds;
+      await ctx.game.connect(who).authorizeSession(key.address, expiresAt, { value: ethers.parseEther("0.01") });
+      return expiresAt;
+    }
+
+    it("registers the key, forwards gas money and exposes the session", async function () {
+      const ctx = await deploy();
+      const key = await newKey();
+      const expiresAt = (await time.latest()) + 3600;
+      await expect(ctx.game.connect(alice).authorizeSession(key.address, expiresAt, { value: ethers.parseEther("0.01") }))
+        .to.emit(ctx.game, "SessionAuthorized")
+        .withArgs(alice.address, key.address, expiresAt, 0);
+      expect(await ethers.provider.getBalance(key.address)).to.eq(ethers.parseEther("0.01"));
+      expect(await ctx.game.playerOfKey(key.address)).to.eq(alice.address);
+      expect(await ctx.game.activeKeyOf(alice.address)).to.eq(key.address);
+    });
+
+    it("lets the key play for the player: the catch, the coins and the cost all belong to the player", async function () {
+      const ctx = await deploy();
+      await ctx.game.connect(alice).claimStarter();
+      const key = await newKey();
+      await authorize(ctx, alice, key);
+      // the key already sees the balance it will spend from
+      const balH = await ctx.coin.confidentialBalanceOf(alice.address);
+      expect(await fhevm.userDecryptEuint(FhevmType.euint64, balH, ctx.coinAddress, key)).to.eq(1000n);
+
+      await expect(ctx.game.connect(key).cast(0)).to.emit(ctx.game, "Cast").withArgs(alice.address, 0, 0);
+      const f = await ctx.game.getFish(0);
+      expect(f.owner).to.eq(alice.address);
+      const byPlayer = await fhevm.userDecryptEuint(FhevmType.euint32, f.packed, ctx.gameAddress, alice);
+      const byKey = await fhevm.userDecryptEuint(FhevmType.euint32, f.packed, ctx.gameAddress, key);
+      expect(byKey).to.eq(byPlayer);
+      await expect(fhevm.userDecryptEuint(FhevmType.euint32, f.packed, ctx.gameAddress, bob)).to.be.rejected;
+      expect(await balanceOf(ctx, alice)).to.eq(995n);
+      expect((await ctx.game.player(alice.address)).castCount).to.eq(1);
+      expect((await ctx.game.player(key.address)).castCount).to.eq(0);
+
+      // sell, upgrade and name all land on the player, and the key can read the new balance
+      await ctx.game.connect(key).sell([0, 1, 2, 3, 4]);
+      const after = await fhevm.userDecryptEuint(
+        FhevmType.euint64,
+        await ctx.coin.confidentialBalanceOf(alice.address),
+        ctx.coinAddress,
+        key,
+      );
+      expect(after).to.eq(await balanceOf(ctx, alice));
+      await ctx.game.connect(key).requestRodUpgrade();
+      const { cleartexts, proof } = await publicProof((await ctx.game.player(alice.address)).upgradePaid);
+      await ctx.game.connect(key).finalizeRodUpgrade(alice.address, cleartexts, proof);
+      expect((await ctx.game.player(alice.address)).rodLevel).to.eq(1);
+      await ctx.game.connect(key).setName("Sari");
+      expect(await ctx.game.names(alice.address)).to.eq("Sari");
+    });
+
+    it("shares the existing bucket with a new key", async function () {
+      const ctx = await deploy();
+      await ctx.game.connect(alice).claimStarter();
+      await ctx.game.connect(alice).cast(0);
+      const key = await newKey();
+      await expect(ctx.game.connect(alice).authorizeSession(key.address, (await time.latest()) + 3600))
+        .to.emit(ctx.game, "SessionAuthorized")
+        .withArgs(alice.address, key.address, anyUint, 5);
+      const f = await ctx.game.getFish(3);
+      expect(await fhevm.userDecryptEuint(FhevmType.euint64, f.price, ctx.gameAddress, key)).to.eq(
+        await fhevm.userDecryptEuint(FhevmType.euint64, f.price, ctx.gameAddress, alice),
+      );
+    });
+
+    it("stops a key when the session expires or is revoked", async function () {
+      const ctx = await deploy();
+      await ctx.game.connect(alice).claimStarter();
+      const key = await newKey();
+      await authorize(ctx, alice, key, 600);
+      await time.increase(601);
+      await expect(ctx.game.connect(key).cast(0))
+        .to.be.revertedWithCustomError(ctx.game, "SessionExpired")
+        .withArgs(key.address);
+      expect(await ctx.game.activeKeyOf(alice.address)).to.eq(ethers.ZeroAddress);
+
+      const key2 = await newKey();
+      await authorize(ctx, alice, key2);
+      await expect(ctx.game.connect(alice).revokeSession())
+        .to.emit(ctx.game, "SessionRevoked")
+        .withArgs(alice.address, key2.address);
+      // after revocation the key is just an unrelated account: it cannot touch the player's fish or coins
+      await ctx.game.connect(key2).cast(0);
+      expect((await ctx.game.player(alice.address)).castCount).to.eq(0);
+      expect(await balanceOf(ctx, alice)).to.eq(1000n);
+    });
+
+    it("rejects unsafe sessions", async function () {
+      const ctx = await deploy();
+      const now = await time.latest();
+      const key = await newKey();
+      await expect(ctx.game.connect(alice).authorizeSession(alice.address, now + 60)).to.be.revertedWithCustomError(
+        ctx.game,
+        "BadSession",
+      );
+      await expect(ctx.game.connect(alice).authorizeSession(key.address, now + 8 * 24 * 3600)).to.be.revertedWithCustomError(
+        ctx.game,
+        "BadSession",
+      );
+      await expect(ctx.game.connect(alice).authorizeSession(ctx.gameAddress, now + 60)).to.be.revertedWithCustomError(
+        ctx.game,
+        "BadSession",
+      );
+      await authorize(ctx, alice, key);
+      await expect(ctx.game.connect(bob).authorizeSession(key.address, now + 600)).to.be.revertedWithCustomError(
+        ctx.game,
+        "BadSession",
+      );
+      await expect(ctx.game.connect(key).authorizeSession(carol.address, now + 600)).to.be.revertedWithCustomError(
+        ctx.game,
+        "BadSession",
+      );
     });
   });
 
