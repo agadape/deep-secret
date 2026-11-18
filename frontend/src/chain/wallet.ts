@@ -83,8 +83,7 @@ export function storedSessionKey(player: `0x${string}`): `0x${string}` | undefin
 }
 
 /** A fresh session key, saved before the authorize transaction so a closed tab cannot strand the forwarded gas. */
-export function newSessionKey(player: `0x${string}`): `0x${string}` {
+export function newSessionKey(player: `0x${string}`): { key: `0x${string}`; saved: boolean } {
   const key = generatePrivateKey();
-  write(sessionSlot(player), key);
-  return key;
+  return { key, saved: write(sessionSlot(player), key) };
 }

@@ -38,6 +38,8 @@ export type State = {
   player?: PlayerView;
   pearls?: bigint; // decrypted coin balance; only this player can see it
   bucket: Fish[];
+  /** Session-key mode: older bucket fish the key cannot read; opened with one wallet signature. */
+  lockedFish: bigint[];
   cast: { phase: CastPhase; status: string; results: Fish[]; shown: number; tx?: string };
   busy?: string;
   nearZone: number | null;
@@ -51,6 +53,7 @@ export type State = {
 
 let state: State = {
   bucket: [],
+  lockedFish: [],
   cast: { phase: "idle", status: "", results: [], shown: 0 },
   nearZone: null,
   nearBuilding: null,

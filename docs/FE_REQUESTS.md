@@ -30,4 +30,8 @@ Teknik gambar sekarang mengikuti permintaan Dave (seperti Inotia 4). Alasan dan 
 
 ## Sudah dikerjakan di frontend (info, tidak butuh aksi)
 
+- **Kunci sesi dipakai ulang saat diperpanjang.** Spesifikasi §Alur 2 menyebut "buat kunci baru". Frontend mengotorisasi ulang kunci yang sudah ada di browser ini selama `playerOfKey(kunci)` masih 0 atau pemain itu sendiri, sesuatu yang memang diizinkan `authorizeSession`. Hasilnya, sisa ETH di kunci tidak hilang dan izin baca lamanya tetap berlaku. Kunci baru hanya dibuat kalau belum ada, atau kalau kuncinya sudah diambil alih dari perangkat lain.
+- **Ikan di luar jatah 40 terbaru.** Ikan yang tidak bisa dibaca kunci sesi ditandai terkunci, jadi login tidak gagal karenanya. Di ember muncul tombol "Open with your wallet" (satu tanda tangan MetaMask, bukan transaksi), sesuai §Alur 2 butir 4.
+- **Kunci yang sudah bukan milik pemain.** Sebelum setiap transaksi, frontend memeriksa `playerOfKey(kunci) == pemain`. Kalau tidak cocok (sesi diganti dari perangkat lain), tombol Renew muncul dan transaksi tidak dikirim.
+
 - `frontend/scripts/sync-contracts.mjs` sekarang memakai ABI dari `contracts/deployments/sepolia/*.json` kalau `contracts/artifacts` tidak ada. Akibatnya `npm run dev` jalan di klon baru tanpa harus mengompilasi kontrak dulu, dan hasilnya identik dengan berkas yang sudah di-commit.

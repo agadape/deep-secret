@@ -24,6 +24,7 @@ function Sheet({ title, children }: { title: string; children: React.ReactNode }
 
 export function BucketPanel() {
   const bucket = useStore((s) => s.bucket);
+  const locked = useStore((s) => s.lockedFish);
   const busy = useStore((s) => s.busy);
   const sorted = [...bucket].sort((a, b) => b.tier - a.tier || Number(b.id - a.id));
   const sellable = bucket.filter((f) => f.state === 0 && !isSecret(f));
@@ -31,6 +32,14 @@ export function BucketPanel() {
   return (
     <Sheet title={`Your bucket (${bucket.length})`}>
       <p className="hint">Only you can see what is in here. Other players see your catches as “???”.</p>
+      {locked.length > 0 && (
+        <p className="hint locked-note">
+          {locked.length} older fish are not readable by this session key.{" "}
+          <button className="chip-btn" disabled={!!busy} onClick={act.unlockOlderFish}>
+            Open with your wallet
+          </button>
+        </p>
+      )}
       <button className="primary" disabled={!!busy || sellable.length === 0} onClick={act.sellAll}>
         Sell all ({sellable.length}) · +{total.toString()} Pearls
       </button>

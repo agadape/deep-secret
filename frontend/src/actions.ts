@@ -25,7 +25,12 @@ function friendly(e: unknown) {
     return "Your 24-hour play session ended. Tap “Renew session”: one confirmation.";
   }
   if (/reject|denied|cancel/i.test(m)) return "Cancelled in your wallet.";
-  if (/insufficient funds/i.test(m)) return "Your wallet has no Sepolia ETH for gas. Get some from a faucet first.";
+  if (/insufficient funds/i.test(m) && getState().mode === "wallet" && walletLink) {
+    // the session key pays gas; renewing re-authorizes the same key and forwards fresh gas
+    setState({ sessionExpired: true });
+    return "Your session key ran out of gas. Tap “Renew session” to top it up (one confirmation).";
+  }
+  if (/insufficient funds/i.test(m)) return "No Sepolia ETH left for gas. Get some from a faucet first.";
   return m.length > 180 ? `${m.slice(0, 180)}…` : m;
 }
 
@@ -46,8 +51,8 @@ export async function refresh(blockNumber?: bigint) {
   if (!a) return;
   const [player, ethBalance] = await Promise.all([chain.loadPlayer(a, blockNumber), chain.loadEth(chain.gasAddress())]);
   setState({ player, ethBalance });
-  const [pearls, bucket] = await Promise.all([chain.loadPearls(a, blockNumber), chain.loadBucket(a, blockNumber)]);
-  setState({ pearls, bucket });
+  const [pearls, b] = await Promise.all([chain.loadPearls(a, blockNumber), chain.loadBucket(a, blockNumber)]);
+  setState({ pearls, bucket: b.fish, lockedFish: b.locked });
 }
 
 /** Shared tail of every login: name, chain state, the private-view permit, the bucket and presence. */
@@ -62,8 +67,8 @@ async function enterIsland(player: `0x${string}`, presenceAs: `0x${string}`) {
   setState({ busy: "Opening your private view: only you can read your fish and Pearls…" });
   await chain.ensurePermit();
   setState({ busy: "Loading your bucket…" });
-  const [pearls, bucket] = await Promise.all([chain.loadPearls(player), chain.loadBucket(player)]);
-  setState({ pearls, bucket });
+  const [pearls, b] = await Promise.all([chain.loadPearls(player), chain.loadBucket(player)]);
+  setState({ pearls, bucket: b.fish, lockedFish: b.locked });
   stopPresence?.();
   // the presence server checks that the login signature matches the address, so sign as whoever holds the key
   stopPresence = connectPresence(RT_URL, presenceAs, name, chain.signLogin);
@@ -90,7 +95,12 @@ async function fundGuest(address: `0x${string}`) {
   setState({ busy: "Asking the island for a little free gas…" });
   let status = "unreachable";
   try {
-    const res = await fetch(DRIP_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address }) });
+    const res = await fetch(DRIP_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address }),
+      signal: AbortSignal.timeout(15_000),
+    });
     status = ((await res.json().catch(() => ({}))) as { status?: string }).status ?? `http_${res.status}`;
   } catch {
     /* server down or blocked: handled below */
@@ -109,7 +119,16 @@ async function fundGuest(address: `0x${string}`) {
     unreachable: "The island server cannot be reached for free gas.",
   };
   setState({
-    gasNote: `${why[status] ?? "Free gas is not available right now."} You can still walk around. To fish, top up this guest wallet from a Sepolia faucet, or use Connect MetaMask.`,
+    gasNote: `${Object.hasOwn(why, status) ? why[status] : "Free gas is not available right now."} You can still walk around. To fish, top up this guest wallet from a Sepolia faucet, or use Connect MetaMask.`,
+  });
+}
+
+/** Session-key mode: open bucket fish older than the key's grant with one wallet signature (no transaction). */
+export function unlockOlderFish() {
+  return guarded("Sign once in your wallet to open your older fish…", async () => {
+    if (!walletLink) throw new Error("Reconnect your wallet to open older fish.");
+    await chain.unlockWithWallet(walletLink.provider, walletLink.player, getState().lockedFish);
+    await refresh();
   });
 }
 
@@ -145,9 +164,22 @@ async function ensureSessionKey(provider: EIP1193Provider, player: `0x${string}`
   const stored = storedSessionKey(player);
   const onchain = await chain.readSession(player);
   const now = Math.floor(Date.now() / 1000);
-  if (stored && localAccount(stored).address.toLowerCase() === onchain.key.toLowerCase() && onchain.expiresAt > now + SESSION_REUSE_MARGIN_S)
-    return { account: localAccount(stored), expiresAt: onchain.expiresAt };
-  const account = localAccount(newSessionKey(player));
+  const storedAccount = stored ? localAccount(stored) : undefined;
+  if (storedAccount && storedAccount.address.toLowerCase() === onchain.key.toLowerCase() && onchain.expiresAt > now + SESSION_REUSE_MARGIN_S) {
+    if ((await chain.loadEth(storedAccount.address).catch(() => 0n)) >= MIN_GAS) return { account: storedAccount, expiresAt: onchain.expiresAt };
+  }
+  // Re-authorize this browser's key when the contract allows it (unused, or already ours): its leftover gas and its
+  // read grants stay usable. A new key only when there is none, or it was taken over elsewhere.
+  let account = storedAccount;
+  if (account) {
+    const owner = await chain.keyOwner(account.address);
+    if (owner !== "0x0000000000000000000000000000000000000000" && owner.toLowerCase() !== player.toLowerCase()) account = undefined;
+  }
+  if (!account) {
+    const fresh = newSessionKey(player);
+    if (!fresh.saved) toast("This browser cannot store the session key: you will need to confirm again after a reload.", "error", 10000);
+    account = localAccount(fresh.key);
+  }
   const expiresAt = now + SESSION_HOURS * 3600;
   setState({ busy: `One confirmation for a ${SESSION_HOURS}-hour session. After that, play without pop-ups.` });
   await chain.authorizeSession(provider, player, account.address, expiresAt, SESSION_VALUE_ETH, () =>

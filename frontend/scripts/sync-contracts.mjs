@@ -8,8 +8,8 @@ for (const n of names) {
   const artPath = new URL(`artifacts/contracts/${n}.sol/${n}.json`, root);
   const dep = new URL(`deployments/sepolia/${n}.json`, root);
   const deployment = existsSync(dep) ? JSON.parse(readFileSync(dep)) : undefined;
-  // artifacts/ is git-ignored, so a fresh clone has none: fall back to the ABI stored with the Sepolia deployment
-  const abi = existsSync(artPath) ? JSON.parse(readFileSync(artPath)).abi : deployment?.abi;
+  // the ABI stored with the Sepolia deployment always matches its address; artifacts/ (git-ignored) is the fallback
+  const abi = deployment?.abi ?? (existsSync(artPath) ? JSON.parse(readFileSync(artPath)).abi : undefined);
   if (!abi) throw new Error(`No ABI for ${n}: compile the contracts or add deployments/sepolia/${n}.json`);
   const address = deployment?.address ?? "0x0000000000000000000000000000000000000000";
   out += `export const ${n} = {\n  address: "${address}",\n  abi: ${JSON.stringify(abi)},\n} as const;\n\n`;
