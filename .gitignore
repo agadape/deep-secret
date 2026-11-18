@@ -1,0 +1,19 @@
+# dependencies and build output
+node_modules/
+dist/
+artifacts/
+cache/
+types/
+fhevmTemp/
+coverage/
+coverage.json
+
+# secrets: throwaway testnet keys live only in local .env files
+.env
+.env.*
+!.env.example
+
+# local run output
+*.log
+test-shots/
+spike-ws/deployments/

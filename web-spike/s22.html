@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Uji Phaser + SDK S22</title>
+    <style>
+      body { margin: 0; background: #163b42; color: #f4efd9; font-family: system-ui, sans-serif; }
+      #game { width: min(96vw, 960px); margin: 8px auto; }
+      #panel { max-width: 960px; margin: 0 auto; padding: 0 8px; }
+      button { padding: 10px 14px; margin: 4px 4px 4px 0; border: 0; border-radius: 8px; background: #f18d5b; color: #26343b; font-weight: 700; cursor: pointer; }
+      pre { background: #0c1a1e; padding: 10px; border-radius: 8px; white-space: pre-wrap; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="panel">
+      <button id="enc">Enkripsi 2 nilai</button>
+      <button id="dec">Buka 5 ikan (Alice)</button>
+      <pre id="out"></pre>
+    </div>
+    <script type="module" src="/s22.ts"></script>
+  </body>
+</html>

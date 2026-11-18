@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pulau uji S21</title>
+    <style>
+      body { margin: 0; background: #163b42; color: #f4efd9; font-family: system-ui, sans-serif; }
+      canvas { display: block; margin: 8px auto; image-rendering: pixelated; width: min(96vw, 960px); background: #277c78; border: 2px solid #26343b; }
+      #hud { text-align: center; font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <div id="hud">menghubungkan…</div>
+    <canvas id="c" width="960" height="540"></canvas>
+    <script type="module">
+      // Guest login with an in-memory key (no wallet in this test page); the server still verifies the signature.
+      import { generatePrivateKey, privateKeyToAccount } from "https://esm.sh/viem@2.58.0/accounts";
+      const hud = document.getElementById("hud");
+      const ctx = document.getElementById("c").getContext("2d");
+      const account = privateKeyToAccount(generatePrivateKey());
+      const name = "Tamu" + Math.floor(Math.random() * 1000);
+      const ws = new WebSocket(`ws://${location.host}/ws`);
+      let me, players = [], keys = {}, pos = { x: 480, y: 270 }, rtt = 0;
+      window.__rt = { get me() { return me; }, get players() { return players; }, pos, keys };
+      ws.onmessage = async (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.t === "challenge") ws.send(JSON.stringify({ t: "auth", address: account.address, signature: await account.signMessage({ message: m.message }), name }));
+        else if (m.t === "welcome") { me = m.id; players = m.players; }
+        else if (m.t === "snap") players = m.players;
+        else if (m.t === "pong") rtt = Date.now() - m.cts;
+        else if (m.t === "chain") hud.textContent = `event chain: ${m.event} oleh ${m.player.slice(0, 8)}…`;
+      };
+      addEventListener("keydown", (e) => (keys[e.key.toLowerCase()] = true));
+      addEventListener("keyup", (e) => (keys[e.key.toLowerCase()] = false));
+      setInterval(() => {
+        let dx = (keys.d ? 1 : 0) - (keys.a ? 1 : 0), dy = (keys.s ? 1 : 0) - (keys.w ? 1 : 0);
+        pos.x = Math.max(0, Math.min(960, pos.x + dx * 8));
+        pos.y = Math.max(0, Math.min(540, pos.y + dy * 8));
+        if (ws.readyState === 1 && me) ws.send(JSON.stringify({ t: "state", x: pos.x, y: pos.y, dir: "down", anim: dx || dy ? "walk" : "idle", cts: Date.now() }));
+      }, 100);
+      setInterval(() => ws.readyState === 1 && ws.send(JSON.stringify({ t: "ping", cts: Date.now() })), 1000);
+      (function draw() {
+        ctx.fillStyle = "#277c78"; ctx.fillRect(0, 0, 960, 540);
+        ctx.fillStyle = "#f2d38d"; ctx.fillRect(0, 380, 960, 160);
+        for (const p of players) {
+          const x = p.id === me ? pos.x : p.x, y = p.id === me ? pos.y : p.y;
+          ctx.fillStyle = p.id === me ? "#f18d5b" : "#f4efd9"; ctx.fillRect(x - 8, y - 8, 16, 16);
+          ctx.fillStyle = "#f4efd9"; ctx.font = "14px system-ui"; ctx.fillText(p.name + (p.anim === "walk" ? " 🚶" : ""), x - 20, y - 14);
+        }
+        if (me) hud.textContent = `${self.crossOriginIsolated ? "terisolasi" : "TIDAK terisolasi"} · pemain di pulau: ${players.length} · RTT ${rtt} ms · gerak: WASD`;
+        requestAnimationFrame(draw);
+      })();
+    </script>
+  </body>
+</html>

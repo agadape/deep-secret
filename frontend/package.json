@@ -1,0 +1,28 @@
+{
+  "name": "deep-secret-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync-contracts.mjs",
+    "dev": "npm run sync && vite --port 5173 --strictPort",
+    "build": "npm run sync && tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@zama-fhe/sdk": "^3.7.2",
+    "phaser": "^3.90.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "viem": "^2.58.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.3.0",
+    "puppeteer-core": "^25.17.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8"
+  }
+}

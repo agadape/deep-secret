@@ -1,0 +1,64 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-spike",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "web-spike/node_modules/vite/bin/vite.js",
+        "web-spike",
+        "--port",
+        "5199",
+        "--strictPort"
+      ],
+      "port": 5199
+    },
+    {
+      "name": "web-spike-isolated",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "web-spike/node_modules/vite/bin/vite.js",
+        "web-spike",
+        "--port",
+        "5198",
+        "--strictPort",
+        "--mode",
+        "isolate"
+      ],
+      "port": 5198
+    },
+    {
+      "name": "rt-spike",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "rt-spike/server.mjs"
+      ],
+      "port": 8787
+    },
+    {
+      "name": "web-spike-prod",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "web-spike/node_modules/vite/bin/vite.js",
+        "preview",
+        "web-spike",
+        "--port",
+        "5197",
+        "--strictPort"
+      ],
+      "port": 5197
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "frontend/node_modules/vite/bin/vite.js",
+        "frontend",
+        "--port",
+        "5173",
+        "--strictPort"
+      ],
+      "port": 5173
+    }
+  ]
+}

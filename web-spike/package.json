@@ -1,0 +1,22 @@
+{
+  "name": "web-spike",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@zama-fhe/sdk": "^3.7.2",
+    "phaser": "^3.90.0",
+    "viem": "^2.57.18",
+    "vite": "^8.3.8"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.17.0"
+  }
+}

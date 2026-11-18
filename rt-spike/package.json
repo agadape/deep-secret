@@ -1,0 +1,14 @@
+{
+  "name": "deep-secret-rt-spike",
+  "private": true,
+  "type": "module",
+  "description": "Spike S21: cosmetic realtime room server (positions, animation, emotes, public chain events). Holds no secrets.",
+  "scripts": {
+    "start": "node server.mjs",
+    "test:clients": "node test-clients.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.58.0",
+    "ws": "^8.23.0"
+  }
+}
