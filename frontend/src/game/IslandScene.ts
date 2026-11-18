@@ -1,18 +1,27 @@
 import Phaser from "phaser";
 import { emit, on, pad, type Anim, type Dir, type RemotePlayer } from "./bus";
 import { BUILDINGS, GRID, SPAWN, TILE, WORLD_H, WORLD_W, fishingZoneAt, nearestBuilding, terrainAt, walkable } from "./map";
-import { PAL, SHIRTS, makeTextures } from "./textures";
+import { PAL, makeTextures } from "./textures";
+import { SHIRT_RAMPS, avatarKey, makeSprites } from "./sprites";
+import { makeBuildings, makeBush, makePalm, makeRock } from "./props";
+import { PAINT_OX, PAINT_OY, paintTerrain } from "./terrainArt";
 
 const SPEED = 72; // px per second
 const DIRS: Record<Dir, [number, number]> = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
 const FISHING: Anim[] = ["cast", "fishing", "reel"];
 
+const AVATAR_H = 34; // DESIGN.md: avatars are 32-36 px tall
+/** Depth by feet position, so whoever stands lower on screen is drawn in front (3/4 overhead view). */
+export const depthAt = (y: number) => 10 + y / 1000;
+
 /** One avatar as everyone sees it. Catches are always a black "???" silhouette (ART_BIBLE §8, Addendum A2-A3). */
 class AvatarView {
   sprite: Phaser.GameObjects.Image;
+  shadow: Phaser.GameObjects.Image;
   label: Phaser.GameObjects.Text;
   line: Phaser.GameObjects.Graphics;
   bobber: Phaser.GameObjects.Image;
+  ripple: Phaser.GameObjects.Graphics;
   silhouette: Phaser.GameObjects.Image;
   mystery: Phaser.GameObjects.Text;
   anim: Anim = "idle";
@@ -23,20 +32,30 @@ class AvatarView {
     private scene: Phaser.Scene,
     x: number,
     y: number,
-    shirt: number,
+    private shirt: number,
     name: string,
     isLocal: boolean,
   ) {
-    this.line = scene.add.graphics().setDepth(5);
-    this.sprite = scene.add.image(x, y, `avatar${shirt}`).setOrigin(0.5, 1).setDepth(10);
+    this.shadow = scene.add.image(x, y, "shadow").setOrigin(0.5, 0.6).setAlpha(0.32).setDepth(4);
+    this.ripple = scene.add.graphics().setDepth(5);
+    this.line = scene.add.graphics().setDepth(9);
+    this.sprite = scene.add.image(x, y, avatarKey(shirt, "front")).setOrigin(0.5, 1).setDepth(depthAt(y));
     this.label = scene.add
-      .text(x, y - 18, name, { fontFamily: "Nunito, system-ui", fontSize: "8px", color: isLocal ? "#f8d77b" : "#f4efd9", resolution: 3 })
+      .text(x, y - AVATAR_H - 1, name, {
+        fontFamily: "Nunito, system-ui",
+        fontSize: "8px",
+        color: isLocal ? "#ffe08a" : "#f2fcff",
+        stroke: "#06162d",
+        strokeThickness: 2,
+        resolution: 3,
+      })
       .setOrigin(0.5, 1)
       .setDepth(20);
     this.bobber = scene.add.image(x, y, "bobber").setDepth(6).setVisible(false);
-    this.silhouette = scene.add.image(x, y - 22, "silhouette").setDepth(21).setVisible(false);
+    // The silhouette and "???" sit above the name so they never cover it (tour finding 18 Nov).
+    this.silhouette = scene.add.image(x, y, "silhouette").setOrigin(0.5, 1).setDepth(21).setVisible(false);
     this.mystery = scene.add
-      .text(x, y - 30, "???", { fontFamily: "Silkscreen, monospace", fontSize: "8px", color: "#f4efd9", resolution: 3 })
+      .text(x, y, "???", { fontFamily: "Silkscreen, monospace", fontSize: "8px", color: "#f2fcff", stroke: "#06162d", strokeThickness: 2, resolution: 3 })
       .setOrigin(0.5, 1)
       .setDepth(21)
       .setVisible(false);
@@ -49,27 +68,40 @@ class AvatarView {
   update(time: number) {
     const { x, y } = this.sprite;
     const walking = this.anim === "walk";
-    this.sprite.setY(y);
-    this.sprite.setAngle(walking ? Math.sin(time / 70) * 6 : 0);
-    this.label.setPosition(x, y - 17);
+    const view = this.dir === "up" ? "back" : this.dir === "down" ? "front" : "side";
+    this.sprite.setTexture(avatarKey(this.shirt, view)).setFlipX(this.dir === "left");
+    // a 1 px step bob instead of rotating the sprite, which would break the pixel grid
+    const step = walking && Math.floor(time / 140) % 2 === 1 ? 1 : 0;
+    this.sprite.setOrigin(0.5, 1 + step / AVATAR_H).setDepth(depthAt(y));
+    this.shadow.setPosition(x, y);
+    this.label.setPosition(x, y - AVATAR_H - 1);
     const fishing = FISHING.includes(this.anim);
     this.bobber.setVisible(fishing);
     this.line.clear();
+    this.ripple.clear();
     if (fishing) {
       const [dx, dy] = DIRS[this.dir];
       this.bob = Math.sin(time / (this.anim === "reel" ? 60 : 300)) * (this.anim === "reel" ? 2 : 1);
-      const bx = x + dx * 26;
-      const by = y - 6 + dy * 26 + this.bob;
-      this.bobber.setPosition(bx, by);
-      this.line.lineStyle(1, PAL.foam, 0.8).lineBetween(x + dx * 6, y - 14, bx, by);
+      const hx = x + dx * 5;
+      const hy = y - 14;
+      const tx = hx + dx * 10;
+      const ty = hy - 9 + dy * 6;
+      const bx = x + dx * 30;
+      const by = y - 4 + dy * 30 + this.bob;
+      this.bobber.setPosition(Math.round(bx), Math.round(by));
+      this.line.lineStyle(1, 0x96623b, 1).lineBetween(hx, hy, tx, ty); // rod
+      this.line.lineStyle(1, 0xf2fcff, 0.7).lineBetween(tx, ty, bx, by - 2); // line
+      const r = 5 + ((time / 120) % 4);
+      this.ripple.lineStyle(1, 0xf2fcff, 0.45 - (r - 5) * 0.1).strokeEllipse(Math.round(bx), Math.round(by) + 3, r * 2, r);
     }
     const holding = this.anim === "hold_unknown";
-    this.silhouette.setVisible(holding).setPosition(x, y - 24 + Math.sin(time / 250));
-    this.mystery.setVisible(holding).setPosition(x, y - 31);
+    const top = y - AVATAR_H - 11;
+    this.silhouette.setVisible(holding).setPosition(x, Math.round(top + Math.sin(time / 250)));
+    this.mystery.setVisible(holding).setPosition(x, top - 10);
   }
 
   destroy() {
-    [this.sprite, this.label, this.line, this.bobber, this.silhouette, this.mystery].forEach((o) => o.destroy());
+    [this.sprite, this.shadow, this.label, this.line, this.ripple, this.bobber, this.silhouette, this.mystery].forEach((o) => o.destroy());
   }
 }
 
@@ -88,9 +120,11 @@ export class IslandScene extends Phaser.Scene {
 
   create() {
     makeTextures(this);
+    makeSprites(this);
     this.drawTerrain();
     this.drawBuildings();
     this.addAmbient();
+    this.addLantern();
 
     this.me = new AvatarView(this, SPAWN.x, SPAWN.y, 0, "you", true);
     // Margin around the island so the avatar can stay above the HUD even at the end of the dock (ART_BIBLE §2.4).
@@ -178,7 +212,7 @@ export class IslandScene extends Phaser.Scene {
       seen.add(p.id);
       let r = this.remotes.get(p.id);
       if (!r) {
-        r = { view: new AvatarView(this, p.x, p.y, 1 + (p.id % (SHIRTS.length - 1)), p.name, false), tx: p.x, ty: p.y };
+        r = { view: new AvatarView(this, p.x, p.y, 1 + (p.id % (SHIRT_RAMPS.length - 1)), p.name, false), tx: p.x, ty: p.y };
         this.remotes.set(p.id, r);
       }
       r.tx = p.x;
@@ -196,37 +230,35 @@ export class IslandScene extends Phaser.Scene {
   }
 
   private drawTerrain() {
-    const rt = this.add.renderTexture(0, 0, WORLD_W, WORLD_H).setOrigin(0).setDepth(0);
-    for (let y = 0; y < GRID.length; y++)
-      for (let x = 0; x < GRID[y].length; x++) {
-        const t = GRID[y][x] === "building" ? "grass" : GRID[y][x];
-        rt.draw(`t-${t}`, x * TILE, y * TILE);
-      }
+    // Painted once per page load at 1 texel = 1 world pixel (style F, terrainArt.ts).
+    if (!this.textures.exists("terrain")) this.textures.addCanvas("terrain", paintTerrain());
+    this.add.image(-PAINT_OX, -PAINT_OY, "terrain").setOrigin(0).setDepth(0);
   }
 
   private drawBuildings() {
-    const g = this.add.graphics().setDepth(3);
+    const art = makeBuildings(this);
+    const shade = this.add.graphics().setDepth(3);
     for (const b of BUILDINGS) {
       const x = b.x * TILE;
-      const y = b.y * TILE;
       const w = b.w * TILE;
-      const h = b.h * TILE;
-      if (b.key === "aquarium") {
-        g.fillStyle(PAL.ink).fillRect(x - 2, y - 2, w + 4, h + 4);
-        g.fillStyle(0x5fd6e0, 0.85).fillRect(x, y, w, h);
-        g.fillStyle(PAL.foam, 0.5).fillRect(x + 4, y + 4, 10, 2);
-      } else {
-        const roof = b.key === "market" ? PAL.coral : b.key === "shop" ? 0x4f8fe8 : PAL.lime;
-        g.fillStyle(PAL.ink).fillRect(x - 1, y - 1, w + 2, h + 2);
-        g.fillStyle(PAL.foam).fillRect(x, y + h / 3, w, (2 * h) / 3);
-        g.fillStyle(roof).fillRect(x, y, w, h / 3 + 2);
-        g.fillStyle(PAL.wood).fillRect(x + w / 2 - 4, y + h - 9, 8, 9);
-      }
+      const bottom = (b.y + b.h) * TILE;
+      const a = art[b.key];
+      // soft contact shadow to the lower right (light from the upper left)
+      if (b.key !== "board") shade.fillStyle(0x06162d, 0.18).fillRect(x + 4, bottom - 3, w - 6, 4);
+      const img = this.add.image(x + w / 2, bottom, a.key).setOrigin(0.5, 1).setDepth(depthAt(bottom));
       this.add
-        .text(x + w / 2, y - 4, b.label, { fontFamily: "Pixelify Sans, system-ui", fontSize: "8px", color: "#f4efd9", resolution: 3 })
+        .text(x + w / 2, bottom - a.h - 3, b.label, {
+          fontFamily: "Pixelify Sans, system-ui",
+          fontSize: "8px",
+          color: "#f2fcff",
+          stroke: "#06162d",
+          strokeThickness: 2,
+          resolution: 3,
+        })
         .setOrigin(0.5, 1)
-        .setDepth(4);
+        .setDepth(img.depth + 0.0005);
     }
+    this.placeProps();
     const zones = [
       { x: 30, y: 38.5, t: "DERMAGA · The Dock" },
       { x: 51, y: 21, t: "KARANG · The Reef" },
@@ -238,6 +270,58 @@ export class IslandScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(4);
     }
+  }
+
+  /** Palms on the beach ring, rocks at the waterline, bushes on the grass. Decorative only: collision stays tile based. */
+  private placeProps() {
+    const palmL = makePalm(this, "palm-l", -1);
+    const palmR = makePalm(this, "palm-r", 1);
+    const rockS = makeRock(this, "rock-s", 12, 9);
+    const rockM = makeRock(this, "rock-m", 20, 14);
+    const bush = makeBush(this, "bush");
+    const put = (key: string, tx: number, ty: number, shadowW: number) => {
+      const x = tx * TILE;
+      const y = ty * TILE;
+      this.add.image(x + 3, y - 1, "shadow").setDisplaySize(shadowW, Math.max(4, shadowW / 4)).setAlpha(0.26).setDepth(4);
+      this.add.image(x, y, key).setOrigin(0.5, 1).setDepth(depthAt(y));
+    };
+    for (const [tx, ty, side] of [
+      [15.2, 17.8, -1],
+      [15.0, 24.6, -1],
+      [44.8, 17.8, 1],
+      [45.0, 24.6, 1],
+      [26.4, 31.2, -1],
+      [33.6, 31.2, 1],
+      [23.6, 12.2, -1],
+      [36.6, 12.2, 1],
+    ] as const)
+      put(side < 0 ? palmL.key : palmR.key, tx, ty, 26);
+    for (const [tx, ty, big] of [
+      [17.4, 28.2, 1],
+      [42.6, 13.6, 1],
+      [19.2, 12.4, 0],
+      [41.0, 29.0, 0],
+      [13.8, 21.0, 0],
+      [46.4, 21.4, 1],
+    ] as const)
+      put(big ? rockM.key : rockS.key, tx, ty, big ? 20 : 12);
+    for (const [tx, ty] of [
+      [25.2, 19.2],
+      [35.0, 19.6],
+      [21.0, 24.0],
+      [41.5, 22.6],
+      [28.0, 25.0],
+    ])
+      put(bush.key, tx, ty, 18);
+  }
+
+  /** Brass lantern on the dock's right post, with a warm ADD-blended light pool that breathes a little. */
+  private addLantern() {
+    const x = 31 * TILE + 4;
+    const y = 31 * TILE + 34;
+    const pool = this.add.image(x, y + 6, "glow-warm").setBlendMode(Phaser.BlendModes.ADD).setDepth(8).setAlpha(0.9);
+    this.add.image(x, y, "lantern").setOrigin(0.5, 0).setDepth(depthAt(y + 8));
+    this.tweens.add({ targets: pool, alpha: 0.7, duration: 1400, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
   }
 
   private addAmbient() {

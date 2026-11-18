@@ -435,3 +435,8 @@ input {
     right: 8px;
   }
 }
+.fish-art.pixel {
+  image-rendering: pixelated;
+  display: block;
+  margin: 0 auto;
+}

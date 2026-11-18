@@ -70,7 +70,7 @@ function Reveal() {
     <div className={`reveal${secret ? " reveal-secret" : ""}`} onClick={act.nextReveal}>
       <div className="reveal-card" onClick={(e) => e.stopPropagation()}>
         {secret && <div className="secret-banner">SECRET!</div>}
-        <FishArt fish={f} size={secret ? 192 : 144} />
+        <FishArt fish={f} size={secret ? 256 : 144} />
         <h2>{f.name}</h2>
         <p className="en">{f.en}</p>
         <p className="tier" style={{ color: f.valid ? TIERS[f.tier].color : "#e85d75" }}>
