@@ -1,9 +1,9 @@
 // Glue between the HUD, the chain layer and the world. Status text always mirrors the real transaction stage
 // (ART_BIBLE §12): no fake progress bars, no invented results.
 import * as chain from "./chain/game";
-import { requestAccount, type DiscoveredWallet } from "./chain/wallet";
-import type { LocalAccount } from "viem";
-import { RT_URL, ZONES } from "./config";
+import { guestKey, localAccount, newSessionKey, requestAccount, storedSessionKey, type DiscoveredWallet } from "./chain/wallet";
+import { parseEther, type EIP1193Provider, type LocalAccount } from "viem";
+import { DRIP_URL, RT_URL, SESSION_HOURS, SESSION_REUSE_MARGIN_S, SESSION_VALUE_ETH, ZONES } from "./config";
 import { isSecret, type Fish } from "./fish";
 import { emit } from "./game/bus";
 import { connectPresence } from "./net/presence";
@@ -11,10 +11,19 @@ import { getState, setState, toast } from "./store";
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 let stopPresence: (() => void) | undefined;
+/** MetaMask mode: kept so an expired session can be renewed without reconnecting. */
+let walletLink: { provider: EIP1193Provider; player: `0x${string}` } | undefined;
+/** Play-now mode: the guest key of this tab, for "Export key". */
+let guest: `0x${string}` | undefined;
+const MIN_GAS = parseEther("0.00005"); // same floor as the server's drip
 
 function friendly(e: unknown) {
   console.error(e);
   const m = (e as { shortMessage?: string; message?: string })?.shortMessage ?? (e as Error)?.message ?? String(e);
+  if (e instanceof chain.SessionExpiredError || /SessionExpired/.test(m)) {
+    setState({ sessionExpired: true });
+    return "Your 24-hour play session ended. Tap “Renew session”: one confirmation.";
+  }
   if (/reject|denied|cancel/i.test(m)) return "Cancelled in your wallet.";
   if (/insufficient funds/i.test(m)) return "Your wallet has no Sepolia ETH for gas. Get some from a faucet first.";
   return m.length > 180 ? `${m.slice(0, 180)}…` : m;
@@ -35,36 +44,150 @@ async function guarded(label: string, f: () => Promise<void>) {
 export async function refresh(blockNumber?: bigint) {
   const a = getState().address;
   if (!a) return;
-  const [player, ethBalance] = await Promise.all([chain.loadPlayer(a, blockNumber), chain.loadEth(a)]);
+  const [player, ethBalance] = await Promise.all([chain.loadPlayer(a, blockNumber), chain.loadEth(chain.gasAddress())]);
   setState({ player, ethBalance });
   const [pearls, bucket] = await Promise.all([chain.loadPearls(a, blockNumber), chain.loadBucket(a, blockNumber)]);
   setState({ pearls, bucket });
 }
 
+/** Shared tail of every login: name, chain state, the private-view permit, the bucket and presence. */
+async function enterIsland(player: `0x${string}`, presenceAs: `0x${string}`) {
+  const name = (await chain.loadName(player)) || short(player);
+  setState({ address: player, name });
+  emit("local-name", name);
+  const [p, ethBalance] = await Promise.all([chain.loadPlayer(player), chain.loadEth(chain.gasAddress())]);
+  setState({ player: p, ethBalance });
+  if (ethBalance === 0n && getState().mode === "dev") toast("This wallet has 0 Sepolia ETH. You need a little for gas (any Sepolia faucet).", "error", 12000);
+  // a local key (guest, session or dev) signs the permit silently; only a plain browser wallet would pop up here
+  setState({ busy: "Opening your private view: only you can read your fish and Pearls…" });
+  await chain.ensurePermit();
+  setState({ busy: "Loading your bucket…" });
+  const [pearls, bucket] = await Promise.all([chain.loadPearls(player), chain.loadBucket(player)]);
+  setState({ pearls, bucket });
+  stopPresence?.();
+  // the presence server checks that the login signature matches the address, so sign as whoever holds the key
+  stopPresence = connectPresence(RT_URL, presenceAs, name, chain.signLogin);
+  void loadAquarium();
+}
+
+/** "Play now": a guest wallet in this browser, funded by the island's gas drip. Zero pop-ups. */
+export function playNow() {
+  return guarded("Preparing your guest wallet…", async () => {
+    const g = guestKey();
+    guest = g.key;
+    const account = localAccount(g.key);
+    chain.startSession(account, account.address);
+    setState({ mode: "guest", walletName: "Guest", gasNote: undefined });
+    if (!g.saved) toast("This browser cannot store the guest wallet: your fish last only until you close this tab.", "error", 12000);
+    else if (g.created) toast("Your guest wallet lives in this browser. Clearing site data loses your fish, so use “Export key” to keep a copy.", "info", 12000);
+    await fundGuest(account.address);
+    await enterIsland(account.address, account.address);
+  });
+}
+
+async function fundGuest(address: `0x${string}`) {
+  if ((await chain.loadEth(address).catch(() => 0n)) >= MIN_GAS) return;
+  setState({ busy: "Asking the island for a little free gas…" });
+  let status = "unreachable";
+  try {
+    const res = await fetch(DRIP_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address }) });
+    status = ((await res.json().catch(() => ({}))) as { status?: string }).status ?? `http_${res.status}`;
+  } catch {
+    /* server down or blocked: handled below */
+  }
+  if (status === "enough") return;
+  if (status === "sent" || status === "pending") {
+    setState({ busy: "Free gas is on its way: waiting for the block…" });
+    if ((await chain.waitForBalance(address)) === 0n) setState({ gasNote: "The free gas is still confirming. Try casting again in a minute." });
+    return;
+  }
+  const why: Record<string, string> = {
+    address_limit: "This guest wallet already used its free gas today.",
+    ip_limit: "Your network already used today’s free gas.",
+    daily_budget_spent: "Today’s free gas is used up.",
+    drip_disabled: "The free gas tap is closed on this server.",
+    unreachable: "The island server cannot be reached for free gas.",
+  };
+  setState({
+    gasNote: `${why[status] ?? "Free gas is not available right now."} You can still walk around. To fish, top up this guest wallet from a Sepolia faucet, or use Connect MetaMask.`,
+  });
+}
+
+/** Copy the guest wallet address, e.g. to paste into a faucet. */
+export async function copyGuestAddress() {
+  const a = getState().address;
+  if (!a) return;
+  try {
+    await navigator.clipboard.writeText(a);
+    toast("Guest address copied. Paste it into a Sepolia faucet.");
+  } catch {
+    window.prompt("Your guest wallet address:", a);
+  }
+}
+
+/** Copy the guest key so the player can keep their fish beyond this browser. */
+export async function exportGuestKey() {
+  if (!guest) return;
+  try {
+    await navigator.clipboard.writeText(guest);
+    toast("Guest key copied. Keep it private: anyone with it can play as you and sell your fish.", "info", 9000);
+  } catch {
+    window.prompt("Copy your guest key and keep it private:", guest);
+  }
+}
+
+/**
+ * Reuse this browser's session key if the contract still accepts it for 10+ minutes; otherwise make a new one and
+ * register it with ONE MetaMask transaction that also forwards a little ETH for gas.
+ */
+async function ensureSessionKey(provider: EIP1193Provider, player: `0x${string}`) {
+  setState({ busy: "Checking your play session…" });
+  const stored = storedSessionKey(player);
+  const onchain = await chain.readSession(player);
+  const now = Math.floor(Date.now() / 1000);
+  if (stored && localAccount(stored).address.toLowerCase() === onchain.key.toLowerCase() && onchain.expiresAt > now + SESSION_REUSE_MARGIN_S)
+    return { account: localAccount(stored), expiresAt: onchain.expiresAt };
+  const account = localAccount(newSessionKey(player));
+  const expiresAt = now + SESSION_HOURS * 3600;
+  setState({ busy: `One confirmation for a ${SESSION_HOURS}-hour session. After that, play without pop-ups.` });
+  await chain.authorizeSession(provider, player, account.address, expiresAt, SESSION_VALUE_ETH, () =>
+    setState({ busy: "Starting your session: waiting for the block…" }),
+  );
+  setState({ busy: "Topping up your session key with gas…" });
+  await chain.waitForBalance(account.address);
+  return { account, expiresAt };
+}
+
 export function connect(w: DiscoveredWallet | { name: string; account: LocalAccount }) {
   return guarded("Connecting…", async () => {
-    let address: `0x${string}`;
     if ("account" in w) {
-      address = w.account.address;
-      chain.startSession(w.account, address);
-    } else {
-      address = await requestAccount(w.provider);
-      chain.startSession(w.provider, address);
+      chain.startSession(w.account, w.account.address);
+      setState({ mode: "dev", walletName: w.name });
+      await enterIsland(w.account.address, w.account.address);
+      return;
     }
-    const name = (await chain.loadName(address)) || short(address);
-    setState({ address, walletName: w.name, name });
-    emit("local-name", name);
-    const [player, ethBalance] = await Promise.all([chain.loadPlayer(address), chain.loadEth(address)]);
-    setState({ player, ethBalance });
-    if (ethBalance === 0n) toast("This wallet has 0 Sepolia ETH. You need a little for gas (any Sepolia faucet).", "error", 12000);
-    setState({ busy: "Sign once to read your own fish and Pearls…" });
+    const player = await requestAccount(w.provider);
+    walletLink = { provider: w.provider, player };
+    setState({ mode: "wallet", walletName: w.name });
+    const { account, expiresAt } = await ensureSessionKey(w.provider, player);
+    chain.startSession(account, player, expiresAt);
+    setState({ sessionExpiresAt: expiresAt, sessionExpired: false });
+    await enterIsland(player, account.address);
+  });
+}
+
+export function renewSession() {
+  return guarded("Renewing your session…", async () => {
+    if (!walletLink) throw new Error("Reload the page and connect your wallet again to renew the session.");
+    const { provider, player } = walletLink;
+    const { account, expiresAt } = await ensureSessionKey(provider, player);
+    chain.startSession(account, player, expiresAt);
+    setState({ sessionExpiresAt: expiresAt, sessionExpired: false });
     await chain.ensurePermit();
-    setState({ busy: "Loading your bucket…" });
-    const [pearls, bucket] = await Promise.all([chain.loadPearls(address), chain.loadBucket(address)]);
-    setState({ pearls, bucket });
     stopPresence?.();
-    stopPresence = connectPresence(RT_URL, address, name, chain.signLogin);
-    void loadAquarium();
+    stopPresence = connectPresence(RT_URL, account.address, getState().name ?? short(player), chain.signLogin);
+    await refresh();
+    toast("Session renewed for 24 hours.");
   });
 }
 

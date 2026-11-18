@@ -19,41 +19,58 @@ const BUILDING_PANEL: Record<string, { panel: Panel; label: string }> = {
 function ConnectScreen() {
   const [wallets, setWallets] = useState<DiscoveredWallet[]>();
   const busy = useStore((s) => s.busy);
+  const note = useStore((s) => s.toast);
   useEffect(() => {
     void discoverWallets().then(setWallets);
   }, []);
+  const dev = devAccount();
   return (
     <div className="connect">
       <div className="connect-card">
         <h1>Deep Secret</h1>
         <p className="tagline">The sea keeps secrets. So do you.</p>
-        <p>
-          Fish with everyone on one island. Your catches are encrypted on-chain: other players only ever see “???”.
-        </p>
+        <p className="lede">Fish with everyone on one island. Your catches are encrypted on-chain: other players only ever see “???”.</p>
         {busy ? (
-          <p className="status">{busy}</p>
-        ) : wallets === undefined ? (
-          <p className="status">Looking for wallets…</p>
-        ) : wallets.length === 0 ? (
-          <p className="status">No browser wallet found. Install MetaMask or Rabby, then reload.</p>
+          <p className="status" role="status">
+            {busy}
+          </p>
         ) : (
-          wallets.map((w) => (
-            <button key={w.rdns} className="primary wallet" onClick={() => act.connect(w)}>
-              {w.icon && <img src={w.icon} alt="" width={20} height={20} />} Connect {w.name}
+          <div className="entry">
+            <button className="play" onClick={() => act.playNow()}>
+              Play now
+              <small>No wallet needed · free test gas</small>
             </button>
-          ))
+            {wallets === undefined ? (
+              <p className="hint">Looking for browser wallets…</p>
+            ) : wallets.length === 0 ? (
+              <p className="hint">No browser wallet found. Play now works without one.</p>
+            ) : (
+              wallets.map((w) => (
+                <button key={w.rdns} className="alt" onClick={() => act.connect(w)}>
+                  <span className="alt-name">
+                    {w.icon && <img src={w.icon} alt="" width={18} height={18} />} Connect {w.name}
+                  </span>
+                  <small>Fish go to your own wallet · 1 confirmation per day</small>
+                </button>
+              ))
+            )}
+            {dev && (
+              <button className="ghost dev" onClick={() => act.connect({ name: "Dev key", account: dev })}>
+                Dev: use test key {dev.address.slice(0, 8)}…
+              </button>
+            )}
+          </div>
         )}
-        {!busy && devAccount() && (
-          <button className="secondary wallet" onClick={() => act.connect({ name: "Dev key", account: devAccount()! })}>
-            Dev: use test key {devAccount()!.address.slice(0, 8)}…
-          </button>
+        {note && (
+          <p className={`connect-note connect-note-${note.kind}`} role="alert">
+            {note.text}
+          </p>
         )}
         <p className="hint">
-          Sepolia testnet. Need test ETH for gas?{" "}
+          Sepolia testnet.{" "}
           <a href={FAUCET_HINT} target="_blank" rel="noreferrer">
-            Get some from a faucet
+            Test ETH faucet
           </a>
-          .
         </p>
         <p className="disclaimer">{DISCLAIMER}</p>
       </div>
@@ -145,13 +162,37 @@ function Hud() {
           <span>
             🦪 {s.pearls === undefined ? "…" : s.pearls.toString()} · Rod {s.player?.rodLevel ?? 0}
           </span>
+          {s.mode === "guest" && (
+            <button className="chip-btn" onClick={() => act.exportGuestKey()}>
+              Guest wallet · Export key
+            </button>
+          )}
         </div>
         <div className="chip secret-chip">Secrets left: ???</div>
         <div className="chip">{s.room ? `${s.online} on ${s.room}` : "offline (solo)"}</div>
       </div>
 
       <div className="hud-bottom">
-        {s.busy && <div className="status">{s.busy}</div>}
+        {s.busy && (
+          <div className="status" role="status">
+            {s.busy}
+          </div>
+        )}
+        {s.gasNote && !s.busy && (
+          <div className="status note">
+            {s.gasNote}
+            {s.mode === "guest" && (
+              <button className="chip-btn" onClick={() => act.copyGuestAddress()}>
+                Copy address
+              </button>
+            )}
+          </div>
+        )}
+        {s.sessionExpired && !s.busy && (
+          <button className="renew" onClick={() => act.renewSession()}>
+            Renew session · 1 confirmation
+          </button>
+        )}
         {s.cast.phase !== "idle" && s.cast.phase !== "reveal" && <div className="status pulse">{s.cast.status}</div>}
         {building && !s.panel && (
           <button className="secondary" onClick={() => setState({ panel: building.panel })}>

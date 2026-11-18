@@ -5,6 +5,7 @@ import {
   createWalletClient,
   custom,
   http,
+  parseEther,
   parseEventLogs,
   type EIP1193Provider,
   type LocalAccount,
@@ -23,11 +24,15 @@ import type { AquariumEntry, PlayerView } from "../store";
 export const publicClient = createPublicClient({ chain: sepolia, transport: http(SEPOLIA_RPC) });
 
 type Session = {
+  /** The player: owner of fish, Pearls and NFTs. All reads use this address. */
   address: `0x${string}`;
+  /** Who signs and pays gas: the browser wallet, a guest key, or a session key acting for the player. */
   account: `0x${string}` | LocalAccount;
   wallet: WalletClient;
   sdk: ZamaSDK;
   permitted: boolean;
+  /** Unix seconds when a session key stops being accepted by the contract (undefined = no session key). */
+  expiresAt?: number;
 };
 let session: Session | undefined;
 const need = () => {
@@ -36,7 +41,7 @@ const need = () => {
 };
 
 /** A browser wallet (EIP-1193), or — in local development only — a throwaway testnet key (see wallet.ts). */
-export function startSession(source: EIP1193Provider | LocalAccount, address: `0x${string}`) {
+export function startSession(source: EIP1193Provider | LocalAccount, address: `0x${string}`, expiresAt?: number) {
   const local = "signTransaction" in source;
   const account = local ? (source as LocalAccount) : address;
   const transport = local ? http(SEPOLIA_RPC) : custom(source as EIP1193Provider);
@@ -47,7 +52,19 @@ export function startSession(source: EIP1193Provider | LocalAccount, address: `0
     walletClient: wallet,
     relayers: { [sepoliaFhe.id]: web() },
   } as Parameters<typeof createConfig>[0]);
-  session = { address, account, wallet, sdk: new ZamaSDK(config), permitted: false };
+  session = { address, account, wallet, sdk: new ZamaSDK(config), permitted: false, expiresAt };
+}
+
+/** The address that pays gas: the local key when there is one, otherwise the player's own wallet. */
+export function gasAddress(): `0x${string}` {
+  const s = need();
+  return typeof s.account === "string" ? s.account : s.account.address;
+}
+
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("SessionExpired: your 24-hour play session ended. Renew it with one confirmation.");
+  }
 }
 
 /** One EIP-712 signature per session lets the player read their own fish and coins (SPIKE_LOG S13). */
@@ -83,6 +100,8 @@ type GameFn = "claimStarter" | "setName" | "cast" | "sell" | "requestRodUpgrade"
 
 async function write(functionName: GameFn, args: readonly unknown[], gas: bigint, onSent?: (hash: string) => void) {
   const s = need();
+  // The contract rejects an expired session key with SessionExpired; catch it before paying gas for a revert.
+  if (s.expiresAt !== undefined && Date.now() / 1000 > s.expiresAt - 60) throw new SessionExpiredError();
   const hash = await s.wallet.writeContract({
     account: s.account,
     chain: sepolia,
@@ -132,6 +151,52 @@ async function publicProof(handle: `0x${string}`) {
 }
 
 // ------------------------------------------------------------------ reads
+
+/** The session key the contract currently accepts for this player (docs/FE_INTEGRATION_SESSIONS.md). */
+export async function readSession(player: `0x${string}`) {
+  const r = await retry(() => publicClient.readContract({ address: GAME.address, abi: GAME.abi, functionName: "sessionOf", args: [player] }));
+  return { key: r.key as `0x${string}`, expiresAt: Number(r.expiresAt) };
+}
+
+/** Poll until a fresh key's balance is visible: a lagging RPC node can still answer 0 right after the funding tx. */
+export async function waitForBalance(address: `0x${string}`, timeoutMs = 60_000) {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    const b = await publicClient.getBalance({ address }).catch(() => 0n);
+    if (b > 0n) return b;
+    if (Date.now() > end) return 0n;
+    await sleep(2500);
+  }
+}
+
+/**
+ * One MetaMask transaction: register `key` as the player's session key until `expiresAt` and forward `valueEth`
+ * to it for gas. After this every game action is signed by the key, without pop-ups.
+ */
+export async function authorizeSession(
+  provider: EIP1193Provider,
+  player: `0x${string}`,
+  key: `0x${string}`,
+  expiresAt: number,
+  valueEth: string,
+  onSent?: (hash: string) => void,
+) {
+  const wallet = createWalletClient({ account: player, chain: sepolia, transport: custom(provider) });
+  const hash = await wallet.writeContract({
+    account: player,
+    chain: sepolia,
+    address: GAME.address,
+    abi: GAME.abi,
+    functionName: "authorizeSession",
+    args: [key, BigInt(expiresAt)],
+    value: parseEther(valueEth),
+    ...FEES,
+  });
+  onSent?.(hash);
+  const receipt = await publicClient.waitForTransactionReceipt({ hash, pollingInterval: 2000 });
+  if (receipt.status !== "success") throw new Error(`Transaction reverted: ${hash}`);
+  return receipt;
+}
 
 export async function loadEth(address: `0x${string}`) {
   return retry(() => publicClient.getBalance({ address }));

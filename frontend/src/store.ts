@@ -26,8 +26,15 @@ export type AquariumEntry = {
 export type State = {
   address?: `0x${string}`;
   walletName?: string;
+  /** guest = "Play now" browser wallet; wallet = MetaMask + session key; dev = local test key */
+  mode?: "guest" | "wallet" | "dev";
+  /** Unix seconds when the session key expires (wallet mode only). */
+  sessionExpiresAt?: number;
+  sessionExpired?: boolean;
+  /** Persistent hint when the guest gas drip could not fund the wallet. */
+  gasNote?: string;
   name?: string;
-  ethBalance?: bigint;
+  ethBalance?: bigint; // balance of whoever pays gas (guest key, session key, or the wallet itself)
   player?: PlayerView;
   pearls?: bigint; // decrypted coin balance; only this player can see it
   bucket: Fish[];

@@ -70,33 +70,93 @@ a {
   image-rendering: pixelated;
 }
 
-/* connect */
+/* connect: matte black card over the live island, deep-sky primary (DESIGN.md) */
 .connect {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(12, 10, 22, 0.55);
+  background: rgba(6, 22, 45, 0.45);
   padding: 16px;
 }
 .connect-card {
-  width: min(440px, 100%);
-  background: var(--panel);
-  border: 2px solid var(--ink);
-  border-radius: 16px;
-  padding: 24px;
+  width: min(420px, 100%);
+  background: rgba(10, 12, 17, 0.94);
+  border: 1px solid rgba(242, 252, 255, 0.1);
+  border-radius: 14px;
+  padding: 28px 24px 18px;
   text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 .connect-card h1 {
   font-family: "Pixelify Sans", Nunito, system-ui;
   font-size: 40px;
+  line-height: 1.05;
   margin: 0;
-  color: var(--gold);
+  color: #f2fcff;
 }
 .tagline {
-  color: var(--aqua);
+  color: #00bfff;
   font-weight: 700;
-  margin-top: 4px;
+  margin: 6px 0 0;
+}
+.lede {
+  color: #c9d6e0;
+  line-height: 1.45;
+  margin: 14px 0 18px;
+}
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.connect-card .play,
+.connect-card .alt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 56px;
+  border-radius: 12px;
+  font-weight: 800;
+  font-size: 18px;
+}
+.connect-card .play {
+  background: #00bfff;
+  color: #06162d;
+}
+.connect-card .play:hover {
+  background: #33ccff;
+}
+.connect-card .alt {
+  background: transparent;
+  color: #f2fcff;
+  border: 1px solid rgba(242, 252, 255, 0.35);
+  font-size: 16px;
+}
+.connect-card .alt:hover {
+  border-color: #f2fcff;
+}
+.alt-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.connect-card small {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.connect-card .dev {
+  color: #8fa3b5;
+  font-size: 13px;
+}
+.connect-card :focus-visible,
+.chip-btn:focus-visible,
+.renew:focus-visible {
+  outline: 2px solid #00bfff;
+  outline-offset: 2px;
 }
 .wallet {
   display: flex;
@@ -107,12 +167,12 @@ a {
   margin: 8px 0;
 }
 .hint {
-  color: #a9c4c4;
+  color: #a9b8c6;
   font-size: 14px;
 }
 .disclaimer,
 .disclaimer-bar {
-  color: #8aa;
+  color: #8a9aa8;
   font-size: 12px;
 }
 .disclaimer-bar {
@@ -120,6 +180,43 @@ a {
   bottom: 2px;
   right: 8px;
   pointer-events: none;
+}
+.connect-note {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  background: rgba(242, 252, 255, 0.06);
+}
+.connect-note-error {
+  color: #ffb4a8;
+  border: 1px solid rgba(255, 140, 120, 0.4);
+}
+.chip-btn {
+  pointer-events: auto;
+  margin-top: 4px;
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  background: transparent;
+  color: #f2fcff;
+  border: 1px solid rgba(242, 252, 255, 0.35);
+  border-radius: 8px;
+}
+.status.note {
+  font-size: 13px;
+  max-width: 520px;
+  overflow-wrap: anywhere;
+}
+.status.note .chip-btn {
+  display: block;
+  margin: 6px auto 0;
+}
+.renew {
+  background: #00bfff;
+  color: #06162d;
+  font-weight: 800;
 }
 
 /* HUD */
@@ -441,4 +538,11 @@ input {
   margin: 0 auto;
   max-width: 100%; /* very narrow phones: shrink rather than overflow the card */
   height: auto;
+}
+
+@media (max-width: 520px) {
+  /* the top HUD wraps to two rows on phones: keep toasts clear of it */
+  .toast {
+    top: 132px;
+  }
 }
