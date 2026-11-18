@@ -239,6 +239,13 @@ export function setName(name: string) {
   });
 }
 
+/**
+ * Addendum A2: what other players see after any catch is the same "hold ???" pose for the same fixed time.
+ * The private reveal UI (longer for a Secret, then Keep / Show off) never changes the broadcast timing.
+ */
+const HOLD_MS = 3000;
+let holdTimer: ReturnType<typeof setTimeout> | undefined;
+
 export async function cast() {
   const s = getState();
   if (s.busy || s.cast.phase !== "idle" || s.nearZone === null || !s.player) return;
@@ -261,6 +268,8 @@ export async function cast() {
     );
     setCast({ phase: "reveal", status: "Your catch is ready!", results: fish, shown: 0 });
     emit("local-anim", "hold_unknown");
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => emit("local-anim", "idle"), HOLD_MS);
     void refresh(receipt.blockNumber).catch(() => undefined);
   } catch (e) {
     setCast({ phase: "idle", status: "" });
@@ -273,7 +282,6 @@ export function nextReveal() {
   setState((st) => {
     const shown = st.cast.shown + 1;
     if (shown < st.cast.results.length) return { cast: { ...st.cast, shown } };
-    emit("local-anim", "idle");
     return { cast: { phase: "idle", status: "", results: [], shown: 0 } };
   });
 }
@@ -281,7 +289,6 @@ export function nextReveal() {
 /** Close the reveal early (e.g. to show off a Secret); the rest of the catch is already in the bucket. */
 export function endReveal() {
   setState({ cast: { phase: "idle", status: "", results: [], shown: 0 } });
-  emit("local-anim", "idle");
 }
 
 export function sellAll() {

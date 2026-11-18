@@ -558,11 +558,15 @@ input {
   justify-content: center;
   gap: 8px;
   padding: 16px;
-  background: rgba(6, 10, 24, 0.9);
+  overflow-y: auto;
+  background: rgba(12, 10, 22, 0.92); /* Void, §4.3 */
   animation: sr-dim 0.6s ease-out;
 }
+.sr:focus {
+  outline: none;
+}
 .sr.is-hush {
-  background: rgba(6, 10, 24, 0.94);
+  background: rgba(12, 10, 22, 0.96);
 }
 .sr-stage {
   position: relative;
@@ -586,8 +590,8 @@ input {
 }
 .sr-shard {
   position: absolute;
-  width: 8px;
-  height: 8px;
+  width: 12px;
+  height: 12px;
   animation: sr-shard 0.8s ease-out forwards;
 }
 .sr-fish {
@@ -613,39 +617,34 @@ input {
   margin: 12px 0 0;
 }
 .sr-skip {
-  position: absolute;
-  bottom: 18px;
+  margin: 4px 0 0;
   font-size: 12px;
   color: #8a9aa8;
 }
+/* the card stands directly on the Void stage: no modal box, the fish and its name lead (§9.2) */
 .sr-card {
-  width: min(380px, 100%);
+  width: min(400px, 100%);
   text-align: center;
-  background: rgba(10, 12, 17, 0.92);
-  border: 1px solid rgba(248, 215, 123, 0.55);
-  border-radius: 14px;
-  padding: 16px 20px 14px;
-  box-shadow: 0 0 0 1px rgba(167, 123, 255, 0.25), 0 20px 50px rgba(0, 0, 0, 0.5);
   animation: pop 0.25s ease-out;
 }
 .sr-card h2 {
   font-family: "Pixelify Sans", Nunito, system-ui;
-  font-size: 30px;
+  font-size: 40px;
+  line-height: 1.05;
   margin: 0;
   color: #f2fcff;
 }
+.sr-card .en {
+  color: #a9b8c6;
+}
 .sr-tier {
-  display: inline-block;
-  margin: 8px 0 4px;
-  padding: 2px 12px;
-  border-radius: 999px;
-  border: 1px solid #f8d77b;
   color: #f8d77b;
   font-weight: 800;
   letter-spacing: 1px;
 }
 .sr-meta {
-  margin: 4px 0;
+  margin: 10px 0 4px;
+  font-size: 18px;
   color: #c9d6e0;
 }
 .sr-private {
@@ -673,8 +672,17 @@ input {
 }
 .sr-keep:focus-visible,
 .sr-show:focus-visible {
-  outline: 2px solid #f8d77b;
+  outline: 2px solid #f2fcff;
   outline-offset: 2px;
+}
+@media (max-height: 560px) {
+  /* phones in landscape: keep the card on screen */
+  .sr-stage {
+    height: 120px;
+  }
+  .sr-card h2 {
+    font-size: 30px;
+  }
 }
 .sr-note {
   display: block;
@@ -771,12 +779,30 @@ input {
 .sb-text small {
   color: #a9b8c6;
 }
+.sb-text small a {
+  display: inline-block;
+  padding-block: 12px;
+  margin-block: -12px;
+}
+.sb-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sb-go {
+  min-height: 48px;
+  background: transparent;
+  color: #f2fcff;
+  border: 1px solid rgba(242, 252, 255, 0.35);
+  font-weight: 800;
+}
 .sb-close {
   background: transparent;
   color: #a9b8c6;
   font-size: 22px;
-  min-height: 40px;
-  padding: 4px 10px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 4px;
 }
 @keyframes sb-in {
   from {

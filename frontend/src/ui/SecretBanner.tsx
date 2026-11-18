@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { loadName } from "../chain/game";
 import { EXPLORER } from "../config";
 import { on } from "../game/bus";
+import { setState, useStore } from "../store";
 import { FishArt } from "./FishArt";
 
 /**
@@ -28,6 +29,7 @@ export function SecretBanner() {
   );
 
   const cur = queue[0];
+  const inGame = useStore((s) => !!s.address);
   useEffect(() => {
     if (!cur) return;
     const t = setTimeout(() => setQueue((q) => q.slice(1)), 8000);
@@ -42,9 +44,9 @@ export function SecretBanner() {
         <FishArt fish={fish} size={64} />
       </div>
       <div className="sb-text">
-        <b className="sb-title">Secret shown</b>
+        <b className="sb-title">{SPECIES[cur.species] ?? "A Secret"} is out of the deep</b>
         <span>
-          <em>{cur.owner}</em> put {SPECIES[cur.species] ?? "a Secret"} in the Public Aquarium
+          Shown off by <em>{cur.owner}</em> · now in the Public Aquarium
         </span>
         <small>
           Secret #{cur.serial} · NFT #{cur.tokenId}
@@ -58,9 +60,16 @@ export function SecretBanner() {
           )}
         </small>
       </div>
-      <button className="sb-close" aria-label="Close" onClick={() => setQueue((q) => q.slice(1))}>
-        ×
-      </button>
+      <div className="sb-side">
+        {inGame && (
+          <button className="sb-go" onClick={() => setState({ panel: "aquarium" })}>
+            See it
+          </button>
+        )}
+        <button className="sb-close" aria-label="Close" onClick={() => setQueue((q) => q.slice(1))}>
+          ×
+        </button>
+      </div>
     </div>
   );
 }

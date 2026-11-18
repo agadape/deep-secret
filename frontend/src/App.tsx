@@ -171,7 +171,7 @@ function Hud() {
 
   return (
     <>
-      <div className="hud-top">
+      <div className="hud-top" {...(s.cast.phase === "reveal" ? { inert: "" } : {})}>
         <div className="chip">
           <b>{s.name}</b>
           <span>
@@ -187,7 +187,7 @@ function Hud() {
         <div className="chip">{s.room ? `${s.online} on ${s.room}` : "offline (solo)"}</div>
       </div>
 
-      <div className="hud-bottom">
+      <div className="hud-bottom" {...(s.cast.phase === "reveal" ? { inert: "" } : {})}>
         {s.busy && (
           <div className="status" role="status">
             {s.busy}
