@@ -10,7 +10,8 @@ type Events = {
   remote: { me: number | undefined; players: RemotePlayer[] };
   near: { zone: number | null; building: string | null };
   pos: { x: number; y: number; dir: Dir; anim: Anim };
-  "secret-flex": { name: string; species: string };
+  /** Public on-chain Flexed event relayed by the presence server: all of it is public once flexed. */
+  "secret-flex": { player: string; species: number; serial: number; tokenId: string; tx?: string };
 };
 
 const target = new EventTarget();

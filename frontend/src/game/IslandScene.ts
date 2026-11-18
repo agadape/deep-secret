@@ -27,6 +27,8 @@ class AvatarView {
   ripple: Phaser.GameObjects.Image;
   silhouette: Phaser.GameObjects.Image;
   mystery: Phaser.GameObjects.Text;
+  /** Public "flex" pose (only after Flexed is confirmed, Addendum A2): a little jump with sparkles. */
+  sparks: Phaser.GameObjects.Image[];
   anim: Anim = "idle";
   dir: Dir = "down";
   private bob = 0;
@@ -56,6 +58,7 @@ class AvatarView {
       .setOrigin(0.5, 1)
       .setDepth(21)
       .setVisible(false);
+    this.sparks = [0, 1, 2, 3].map(() => scene.add.image(x, y, "sparkle").setTint(0xf8d77b).setDepth(21).setVisible(false));
   }
 
   setName(name: string) {
@@ -74,7 +77,8 @@ class AvatarView {
     }
     this.sprite.setFlipX(this.dir === "left");
     // a 1 px bob on the lifted-foot frames instead of rotating the sprite, which would break the pixel grid
-    const step = frame ? 1 : 0;
+    const flexing = this.anim === "flex";
+    const step = flexing ? (Math.floor(time / 180) % 2) * 3 : frame ? 1 : 0;
     const depth = depthAt(y);
     this.sprite.setOrigin(0.5, 1 + step / AVATAR_H).setDepth(depth);
     this.shadow.setPosition(x, y);
@@ -100,6 +104,10 @@ class AvatarView {
       const f = Math.floor(time / 160) % RIPPLE_FRAMES.length;
       this.ripple.setTexture(RIPPLE_FRAMES[f]).setPosition(bx, by + 3).setAlpha(0.6 - f * 0.12);
     }
+    this.sparks.forEach((sp, i) => {
+      const a = time / 300 + (i * Math.PI) / 2;
+      sp.setVisible(flexing).setPosition(Math.round(x + Math.cos(a) * 14), Math.round(y - AVATAR_H + Math.sin(a) * 6));
+    });
     const holding = this.anim === "hold_unknown";
     const top = y - AVATAR_H - 11;
     this.silhouette.setVisible(holding).setPosition(x, Math.round(top + Math.sin(time / 250)));
@@ -107,7 +115,7 @@ class AvatarView {
   }
 
   destroy() {
-    [this.sprite, this.shadow, this.label, this.line, this.ripple, this.bobber, this.silhouette, this.mystery].forEach((o) => o.destroy());
+    [this.sprite, this.shadow, this.label, this.line, this.ripple, this.bobber, this.silhouette, this.mystery, ...this.sparks].forEach((o) => o.destroy());
   }
 }
 

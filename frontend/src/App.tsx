@@ -7,6 +7,8 @@ import { on, pad } from "./game/bus";
 import { PhaserGame } from "./game/PhaserGame";
 import { setState, toast, useStore, type Panel } from "./store";
 import { FishArt } from "./ui/FishArt";
+import { SecretBanner } from "./ui/SecretBanner";
+import { SecretReveal } from "./ui/SecretReveal";
 import { AquariumPanel, BoardPanel, BucketPanel, ShopPanel } from "./ui/Panels";
 
 const BUILDING_PANEL: Record<string, { panel: Panel; label: string }> = {
@@ -83,6 +85,19 @@ function Reveal() {
   if (cast.phase !== "reveal") return null;
   const f = cast.results[cast.shown];
   const secret = isSecret(f);
+  if (secret)
+    return (
+      <SecretReveal
+        key={String(f.id)}
+        fish={f}
+        last={cast.shown + 1 >= cast.results.length}
+        onKeep={act.nextReveal}
+        onShowOff={() => {
+          act.endReveal();
+          void act.flex(f.id);
+        }}
+      />
+    );
   return (
     <div className={`reveal${secret ? " reveal-secret" : ""}`} onClick={act.nextReveal}>
       <div className="reveal-card" onClick={(e) => e.stopPropagation()}>
@@ -225,18 +240,12 @@ function Hud() {
 export function App() {
   const address = useStore((s) => s.address);
   useEffect(() => on("near", ({ zone, building }) => setState({ nearZone: zone, nearBuilding: building })), []);
-  useEffect(
-    () =>
-      on("secret-flex", ({ name, species }) => {
-        toast(`🔔 SECRET SHOWN! ${name} put a ${species} in the Public Aquarium.`, "secret", 10000);
-        void act.loadAquarium();
-      }),
-    [],
-  );
+  useEffect(() => on("secret-flex", () => void act.loadAquarium()), []);
   return (
     <div className="app">
       <PhaserGame />
       {address ? <Hud /> : <ConnectScreen />}
+      <SecretBanner />
     </div>
   );
 }

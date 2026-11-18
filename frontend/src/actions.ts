@@ -278,6 +278,12 @@ export function nextReveal() {
   });
 }
 
+/** Close the reveal early (e.g. to show off a Secret); the rest of the catch is already in the bucket. */
+export function endReveal() {
+  setState({ cast: { phase: "idle", status: "", results: [], shown: 0 } });
+  emit("local-anim", "idle");
+}
+
 export function sellAll() {
   return guarded("Confirm the sale in your wallet…", async () => {
     const sellable = getState().bucket.filter((f: Fish) => f.state === 0 && !isSecret(f));
@@ -308,7 +314,8 @@ export function flex(fishId: bigint) {
     const res = await chain.flex(fishId, (m) => setState({ busy: m }));
     await refresh();
     if (res.flexed) {
-      toast("Your Secret is now a 1-of-1 NFT in the Public Aquarium!", "secret", 10000);
+      // every player (this one included) gets the public banner from the relayed Flexed event
+      toast("Shown off: your Secret is now a 1-of-1 NFT in the Public Aquarium.", "secret", 6000);
       emit("local-anim", "flex");
       setTimeout(() => emit("local-anim", "idle"), 3000);
       await loadAquarium();

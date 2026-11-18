@@ -546,3 +546,258 @@ input {
     top: 132px;
   }
 }
+
+/* private Secret reveal (owner only, ART_BIBLE §9.3 + Addendum A1-A2) */
+.sr {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  background: rgba(6, 10, 24, 0.9);
+  animation: sr-dim 0.6s ease-out;
+}
+.sr.is-hush {
+  background: rgba(6, 10, 24, 0.94);
+}
+.sr-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(320px, 100%);
+  height: 180px;
+  flex: none;
+}
+.sr-ring {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 2px solid #48f0db;
+  animation: sr-ring 1.1s ease-out infinite;
+}
+.sr-sil {
+  image-rendering: pixelated;
+  animation: sr-shiver 0.12s steps(2) infinite;
+}
+.sr-shard {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  animation: sr-shard 0.8s ease-out forwards;
+}
+.sr-fish {
+  position: relative;
+  display: grid;
+  place-items: center;
+  animation: sr-rise 0.9s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.sr.is-card .sr-fish {
+  animation: none;
+}
+.sr-aura {
+  position: absolute;
+  inset: -30% -10%;
+  background: radial-gradient(closest-side, rgba(72, 240, 219, 0.32), rgba(167, 123, 255, 0.18) 55%, transparent 75%);
+  animation: sr-breathe 2.4s ease-in-out infinite;
+}
+.sr-omen {
+  font-family: "Pixelify Sans", Nunito, system-ui;
+  font-size: 20px;
+  color: #b6f1f2;
+  text-align: center;
+  margin: 12px 0 0;
+}
+.sr-skip {
+  position: absolute;
+  bottom: 18px;
+  font-size: 12px;
+  color: #8a9aa8;
+}
+.sr-card {
+  width: min(380px, 100%);
+  text-align: center;
+  background: rgba(10, 12, 17, 0.92);
+  border: 1px solid rgba(248, 215, 123, 0.55);
+  border-radius: 14px;
+  padding: 16px 20px 14px;
+  box-shadow: 0 0 0 1px rgba(167, 123, 255, 0.25), 0 20px 50px rgba(0, 0, 0, 0.5);
+  animation: pop 0.25s ease-out;
+}
+.sr-card h2 {
+  font-family: "Pixelify Sans", Nunito, system-ui;
+  font-size: 30px;
+  margin: 0;
+  color: #f2fcff;
+}
+.sr-tier {
+  display: inline-block;
+  margin: 8px 0 4px;
+  padding: 2px 12px;
+  border-radius: 999px;
+  border: 1px solid #f8d77b;
+  color: #f8d77b;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.sr-meta {
+  margin: 4px 0;
+  color: #c9d6e0;
+}
+.sr-private {
+  color: #b6f1f2;
+  font-size: 14px;
+  margin: 10px 0 12px;
+}
+.sr-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.sr-keep {
+  background: #0c0a16;
+  color: #f2fcff;
+  border: 1px solid rgba(242, 252, 255, 0.35);
+  font-weight: 800;
+  min-height: 48px;
+}
+.sr-show {
+  background: #00bfff;
+  color: #06162d;
+  font-weight: 800;
+  min-height: 48px;
+}
+.sr-keep:focus-visible,
+.sr-show:focus-visible {
+  outline: 2px solid #f8d77b;
+  outline-offset: 2px;
+}
+.sr-note {
+  display: block;
+  margin-top: 10px;
+  color: #8a9aa8;
+  font-size: 12px;
+}
+@keyframes sr-dim {
+  from {
+    background: rgba(6, 10, 24, 0);
+  }
+}
+@keyframes sr-ring {
+  from {
+    transform: scale(0.4);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+@keyframes sr-shiver {
+  50% {
+    transform: translateX(2px);
+  }
+}
+@keyframes sr-shard {
+  from {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  to {
+    transform: translate(var(--dx), var(--dy));
+    opacity: 0;
+  }
+}
+@keyframes sr-rise {
+  from {
+    transform: scale(0.55);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@keyframes sr-breathe {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* public banner after Flexed is confirmed on-chain */
+.sb {
+  position: absolute;
+  z-index: 25;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, calc(100% - 16px));
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(10, 12, 17, 0.94);
+  border: 1px solid rgba(248, 215, 123, 0.6);
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(167, 123, 255, 0.3), 0 16px 40px rgba(0, 0, 0, 0.45);
+  animation: sb-in 0.45s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+.sb-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: #f2fcff;
+}
+.sb-title {
+  font-family: "Pixelify Sans", Nunito, system-ui;
+  font-size: 20px;
+  color: #f8d77b;
+  letter-spacing: 1px;
+}
+.sb-text em {
+  font-style: normal;
+  font-weight: 800;
+  color: #48f0db;
+}
+.sb-text small {
+  color: #a9b8c6;
+}
+.sb-close {
+  background: transparent;
+  color: #a9b8c6;
+  font-size: 22px;
+  min-height: 40px;
+  padding: 4px 10px;
+}
+@keyframes sb-in {
+  from {
+    transform: translate(-50%, -24px);
+    opacity: 0;
+  }
+}
+@media (max-width: 520px) {
+  .sb {
+    top: 132px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sr,
+  .sr-ring,
+  .sr-sil,
+  .sr-shard,
+  .sr-fish,
+  .sr-aura,
+  .sr-card,
+  .sb {
+    animation: none;
+  }
+}
