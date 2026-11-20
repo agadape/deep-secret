@@ -45,6 +45,9 @@ const ORIGINS = (process.env.ALLOWED_ORIGIN ?? "*").split(",").map((o) => o.trim
 const corsOrigin = (req) => (ORIGINS.includes("*") ? "*" : ORIGINS.includes(req.headers.origin) ? req.headers.origin : ORIGINS[0]);
 const CORS = { "access-control-allow-headers": "content-type", vary: "origin" };
 
+const chain = createPublicClient({ chain: sepolia, transport: http(RPC) });
+const SESSION_ABI = parseAbi(["function activeKeyOf(address player) view returns (address)"]);
+
 const loginMessage = (nonce) => `Deep Secret — masuk ke pulau\n\nTanda tangan ini gratis dan tidak mengirim transaksi.\nNonce: ${nonce}`;
 
 const rooms = new Map();
@@ -138,12 +141,32 @@ wss.on("connection", (ws) => {
     }
 
     if (m.t === "auth" && !conn.player) {
+      if (conn.authing) return; // one login attempt at a time (the on-chain check is async)
+      conn.authing = true;
+      // A player in MetaMask mode signs with their session key (no popup): { address: player, key, signature }.
+      // The signature must come from the key, and the key must be the player's live session key on-chain.
       let ok = false;
       try {
-        ok = await verifyMessage({ address: m.address, message: loginMessage(nonce), signature: m.signature });
+        const signer = m.key ?? m.address;
+        ok = await verifyMessage({ address: signer, message: loginMessage(nonce), signature: m.signature });
+        if (ok && m.key && String(m.key).toLowerCase() !== String(m.address).toLowerCase()) {
+          ok = false;
+          // the RPC node may lag a block behind a fresh authorizeSession: retry briefly before refusing
+          for (let i = 0; i < 4 && !ok; i++) {
+            if (i > 0) await new Promise((r) => setTimeout(r, 2000));
+            const live = await chain.readContract({
+              address: GAME,
+              abi: SESSION_ABI,
+              functionName: "activeKeyOf",
+              args: [m.address],
+            });
+            ok = live.toLowerCase() === String(m.key).toLowerCase();
+          }
+        }
       } catch {
         ok = false;
       }
+      conn.authing = false;
       if (!ok) {
         send(ws, { t: "error", error: "bad_signature" });
         ws.close();
@@ -199,7 +222,6 @@ setInterval(() => {
 }, TICK_MS);
 
 // Public contract events → every room: casts, flexes (the only catch announcement) and snatch attempts.
-const chain = createPublicClient({ chain: sepolia, transport: http(RPC) });
 chain.watchContractEvent({
   address: GAME,
   abi: parseAbi([

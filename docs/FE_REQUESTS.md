@@ -35,3 +35,10 @@ Teknik gambar sekarang mengikuti permintaan Dave (seperti Inotia 4). Alasan dan 
 - **Kunci yang sudah bukan milik pemain.** Sebelum setiap transaksi, frontend memeriksa `playerOfKey(kunci) == pemain`. Kalau tidak cocok (sesi diganti dari perangkat lain), tombol Renew muncul dan transaksi tidak dikirim.
 
 - `frontend/scripts/sync-contracts.mjs` sekarang memakai ABI dari `contracts/deployments/sepolia/*.json` kalau `contracts/artifacts` tidak ada. Akibatnya `npm run dev` jalan di klon baru tanpa harus mengompilasi kontrak dulu, dan hasilnya identik dengan berkas yang sudah di-commit.
+
+## Jawaban sisi kontrak/server (20 Nov)
+
+- **#1 selesai** (`rt-spike/server.mjs`, di `main`). Kirim `{ t: "auth", address: <pemain>, key: <kunci sesi>, signature, name }`; tanda tangan dibuat oleh kunci. Server memeriksa `activeKeyOf(pemain) == key` di kontrak (dengan retry singkat kalau RPC tertinggal), jadi kunci yang kedaluwarsa atau sudah diganti ditolak. Tanpa `key`, alur lama (dompet menandatangani sendiri) tetap berlaku. "Satu avatar per alamat" sekarang memakai alamat pemain. Diuji di Sepolia: `rt-spike/test-session-login.mjs`.
+- **#2 siap teknis, menunggu keputusan hosting.** Server sudah punya Dockerfile, daftar origin (`ALLOWED_ORIGIN`, juga dicek di WebSocket), dan IP klien tepercaya untuk batas drip. Lihat `rt-spike/README.md`.
+- **#3 menunggu "ya" dari pemilik proyek.**
+- **Perhatian:** kontrak versi berikutnya mengubah `authorizeSession` (kunci ikut menandatangani). Kunci yang dipakai ulang tetap bisa, cukup tanda tangani ulang. Detail: `docs/FE_INTEGRATION_SAMBAR.md` bagian "Perubahan dari review kontrak".

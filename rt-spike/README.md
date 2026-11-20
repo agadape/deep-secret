@@ -4,7 +4,7 @@
 
 A small Node server (`ws` + `viem`) with two jobs:
 
-1. **Presence**: players sign a free login message, then share only cosmetic state (name, position, facing, animation, emotes) in rooms of 30, at 10 snapshots per second. It never sees fish, balances, keys or decryption rights. It also relays public contract events to every room: `Cast`, `Flexed` (the only catch announcement) and `Snatched` (who targeted which fish id; the outcome stays encrypted).
+1. **Presence**: players sign a free login message (or their session key signs it: `{address: player, key, signature}`, checked against `activeKeyOf(player)` on-chain), then share only cosmetic state (name, position, facing, animation, emotes) in rooms of 30, at 10 snapshots per second. It never sees fish, balances, keys or decryption rights. It also relays public contract events to every room: `Cast`, `Flexed` (the only catch announcement) and `Snatched` (who targeted which fish id; the outcome stays encrypted).
 2. **Gas drip** (`POST /drip {"address":"0x…"}`): funds guest "Play now" wallets with Sepolia ETH so they never need a faucet. Limits: 3 per address and 5 per IP per day, a daily budget, one in-flight drip per address.
 
 | Endpoint | Use |
@@ -19,6 +19,8 @@ A small Node server (`ws` + `viem`) with two jobs:
 npm install
 cp .env.example .env   # DRIP_PRIVATE_KEY = a throwaway Sepolia key; leave empty to disable the drip
 npm start              # http://localhost:8787
+node test-clients.mjs          # two clients, latency, forged login, room overflow
+node test-session-login.mjs    # login with a session key (sends one Sepolia tx from the Alice test key)
 ```
 
 ## Host it
