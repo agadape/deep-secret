@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { useEffect, useRef } from "react";
 import { IslandScene } from "./IslandScene";
+import { DEEPEST } from "./terrainArt";
 
 /**
  * Mounts the Phaser world once. The canvas fills the screen and the camera uses an integer zoom, so pixels stay
@@ -13,7 +14,7 @@ export function PhaserGame() {
       type: Phaser.AUTO,
       parent: host.current!,
       pixelArt: true,
-      backgroundColor: "#163b42",
+      backgroundColor: DEEPEST,
       scale: { mode: Phaser.Scale.RESIZE, width: "100%", height: "100%" },
       scene: IslandScene,
     });

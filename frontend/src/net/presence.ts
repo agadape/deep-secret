@@ -35,8 +35,13 @@ export function connectPresence(url: string, address: `0x${string}`, name: strin
         emit("remote", { me, players: m.players as RemotePlayer[] });
       } else if (m.t === "chain" && m.event === "Flexed") {
         // public on-chain event relayed by the server: someone chose to show off a Secret
-        const who = `${String(m.player).slice(0, 6)}…${String(m.player).slice(-4)}`;
-        emit("secret-flex", { name: who, species: Number(m.species) === 0 ? "Raja Abyss" : "Ratu Palung" });
+        emit("secret-flex", {
+          player: String(m.player),
+          species: Number(m.species),
+          serial: Number(m.serial),
+          tokenId: String(m.tokenId),
+          tx: typeof m.tx === "string" ? m.tx : undefined,
+        });
       } else if (m.t === "error") {
         setState({ room: undefined });
       }

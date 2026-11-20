@@ -70,33 +70,93 @@ a {
   image-rendering: pixelated;
 }
 
-/* connect */
+/* connect: matte black card over the live island, deep-sky primary (DESIGN.md) */
 .connect {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(12, 10, 22, 0.55);
+  background: rgba(6, 22, 45, 0.45);
   padding: 16px;
 }
 .connect-card {
-  width: min(440px, 100%);
-  background: var(--panel);
-  border: 2px solid var(--ink);
-  border-radius: 16px;
-  padding: 24px;
+  width: min(420px, 100%);
+  background: rgba(10, 12, 17, 0.94);
+  border: 1px solid rgba(242, 252, 255, 0.1);
+  border-radius: 14px;
+  padding: 28px 24px 18px;
   text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 .connect-card h1 {
   font-family: "Pixelify Sans", Nunito, system-ui;
   font-size: 40px;
+  line-height: 1.05;
   margin: 0;
-  color: var(--gold);
+  color: #f2fcff;
 }
 .tagline {
-  color: var(--aqua);
+  color: #00bfff;
   font-weight: 700;
-  margin-top: 4px;
+  margin: 6px 0 0;
+}
+.lede {
+  color: #c9d6e0;
+  line-height: 1.45;
+  margin: 14px 0 18px;
+}
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.connect-card .play,
+.connect-card .alt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 56px;
+  border-radius: 12px;
+  font-weight: 800;
+  font-size: 18px;
+}
+.connect-card .play {
+  background: #00bfff;
+  color: #06162d;
+}
+.connect-card .play:hover {
+  background: #33ccff;
+}
+.connect-card .alt {
+  background: transparent;
+  color: #f2fcff;
+  border: 1px solid rgba(242, 252, 255, 0.35);
+  font-size: 16px;
+}
+.connect-card .alt:hover {
+  border-color: #f2fcff;
+}
+.alt-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.connect-card small {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.connect-card .dev {
+  color: #8fa3b5;
+  font-size: 13px;
+}
+.connect-card :focus-visible,
+.chip-btn:focus-visible,
+.renew:focus-visible {
+  outline: 2px solid #00bfff;
+  outline-offset: 2px;
 }
 .wallet {
   display: flex;
@@ -107,12 +167,12 @@ a {
   margin: 8px 0;
 }
 .hint {
-  color: #a9c4c4;
+  color: #a9b8c6;
   font-size: 14px;
 }
 .disclaimer,
 .disclaimer-bar {
-  color: #8aa;
+  color: #8a9aa8;
   font-size: 12px;
 }
 .disclaimer-bar {
@@ -120,6 +180,43 @@ a {
   bottom: 2px;
   right: 8px;
   pointer-events: none;
+}
+.connect-note {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  background: rgba(242, 252, 255, 0.06);
+}
+.connect-note-error {
+  color: #ffb4a8;
+  border: 1px solid rgba(255, 140, 120, 0.4);
+}
+.chip-btn {
+  pointer-events: auto;
+  margin-top: 4px;
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  background: transparent;
+  color: #f2fcff;
+  border: 1px solid rgba(242, 252, 255, 0.35);
+  border-radius: 8px;
+}
+.status.note {
+  font-size: 13px;
+  max-width: 520px;
+  overflow-wrap: anywhere;
+}
+.status.note .chip-btn {
+  display: block;
+  margin: 6px auto 0;
+}
+.renew {
+  background: #00bfff;
+  color: #06162d;
+  font-weight: 800;
 }
 
 /* HUD */
@@ -433,5 +530,300 @@ input {
     top: 8px;
     bottom: 8px;
     right: 8px;
+  }
+}
+.fish-art.pixel {
+  image-rendering: pixelated;
+  display: block;
+  margin: 0 auto;
+  max-width: 100%; /* very narrow phones: shrink rather than overflow the card */
+  height: auto;
+}
+
+@media (max-width: 520px) {
+  /* the top HUD wraps to two rows on phones: keep toasts clear of it */
+  .toast {
+    top: 132px;
+  }
+}
+
+/* private Secret reveal (owner only, ART_BIBLE §9.3 + Addendum A1-A2) */
+.sr {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  overflow-y: auto;
+  background: rgba(12, 10, 22, 0.92); /* Void, §4.3 */
+  animation: sr-dim 0.6s ease-out;
+}
+.sr:focus {
+  outline: none;
+}
+.sr.is-hush {
+  background: rgba(12, 10, 22, 0.96);
+}
+.sr-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(320px, 100%);
+  height: 180px;
+  flex: none;
+}
+.sr-ring {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 2px solid #48f0db;
+  animation: sr-ring 1.1s ease-out infinite;
+}
+.sr-sil {
+  image-rendering: pixelated;
+  animation: sr-shiver 0.12s steps(2) infinite;
+}
+.sr-shard {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  animation: sr-shard 0.8s ease-out forwards;
+}
+.sr-fish {
+  position: relative;
+  display: grid;
+  place-items: center;
+  animation: sr-rise 0.9s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.sr.is-card .sr-fish {
+  animation: none;
+}
+.sr-aura {
+  position: absolute;
+  inset: -30% -10%;
+  background: radial-gradient(closest-side, rgba(72, 240, 219, 0.32), rgba(167, 123, 255, 0.18) 55%, transparent 75%);
+  animation: sr-breathe 2.4s ease-in-out infinite;
+}
+.sr-omen {
+  font-family: "Pixelify Sans", Nunito, system-ui;
+  font-size: 20px;
+  color: #b6f1f2;
+  text-align: center;
+  margin: 12px 0 0;
+}
+.sr-skip {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #8a9aa8;
+}
+/* the card stands directly on the Void stage: no modal box, the fish and its name lead (§9.2) */
+.sr-card {
+  width: min(400px, 100%);
+  text-align: center;
+  animation: pop 0.25s ease-out;
+}
+.sr-card h2 {
+  font-family: "Pixelify Sans", Nunito, system-ui;
+  font-size: 40px;
+  line-height: 1.05;
+  margin: 0;
+  color: #f2fcff;
+}
+.sr-card .en {
+  color: #a9b8c6;
+}
+.sr-tier {
+  color: #f8d77b;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.sr-meta {
+  margin: 10px 0 4px;
+  font-size: 18px;
+  color: #c9d6e0;
+}
+.sr-private {
+  color: #b6f1f2;
+  font-size: 14px;
+  margin: 10px 0 12px;
+}
+.sr-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.sr-keep {
+  background: #0c0a16;
+  color: #f2fcff;
+  border: 1px solid rgba(242, 252, 255, 0.35);
+  font-weight: 800;
+  min-height: 48px;
+}
+.sr-show {
+  background: #00bfff;
+  color: #06162d;
+  font-weight: 800;
+  min-height: 48px;
+}
+.sr-keep:focus-visible,
+.sr-show:focus-visible {
+  outline: 2px solid #f2fcff;
+  outline-offset: 2px;
+}
+@media (max-height: 560px) {
+  /* phones in landscape: keep the card on screen */
+  .sr-stage {
+    height: 120px;
+  }
+  .sr-card h2 {
+    font-size: 30px;
+  }
+}
+.sr-note {
+  display: block;
+  margin-top: 10px;
+  color: #8a9aa8;
+  font-size: 12px;
+}
+@keyframes sr-dim {
+  from {
+    background: rgba(6, 10, 24, 0);
+  }
+}
+@keyframes sr-ring {
+  from {
+    transform: scale(0.4);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+@keyframes sr-shiver {
+  50% {
+    transform: translateX(2px);
+  }
+}
+@keyframes sr-shard {
+  from {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  to {
+    transform: translate(var(--dx), var(--dy));
+    opacity: 0;
+  }
+}
+@keyframes sr-rise {
+  from {
+    transform: scale(0.55);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@keyframes sr-breathe {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* public banner after Flexed is confirmed on-chain */
+.sb {
+  position: absolute;
+  z-index: 25;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, calc(100% - 16px));
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(10, 12, 17, 0.94);
+  border: 1px solid rgba(248, 215, 123, 0.6);
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(167, 123, 255, 0.3), 0 16px 40px rgba(0, 0, 0, 0.45);
+  animation: sb-in 0.45s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+.sb-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: #f2fcff;
+}
+.sb-title {
+  font-family: "Pixelify Sans", Nunito, system-ui;
+  font-size: 20px;
+  color: #f8d77b;
+  letter-spacing: 1px;
+}
+.sb-text em {
+  font-style: normal;
+  font-weight: 800;
+  color: #48f0db;
+}
+.sb-text small {
+  color: #a9b8c6;
+}
+.sb-text small a {
+  display: inline-block;
+  padding-block: 12px;
+  margin-block: -12px;
+}
+.sb-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sb-go {
+  min-height: 48px;
+  background: transparent;
+  color: #f2fcff;
+  border: 1px solid rgba(242, 252, 255, 0.35);
+  font-weight: 800;
+}
+.sb-close {
+  background: transparent;
+  color: #a9b8c6;
+  font-size: 22px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 4px;
+}
+@keyframes sb-in {
+  from {
+    transform: translate(-50%, -24px);
+    opacity: 0;
+  }
+}
+@media (max-width: 520px) {
+  .sb {
+    top: 132px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sr,
+  .sr-ring,
+  .sr-sil,
+  .sr-shard,
+  .sr-fish,
+  .sr-aura,
+  .sr-card,
+  .sb {
+    animation: none;
   }
 }

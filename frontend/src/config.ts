@@ -9,6 +9,13 @@ export const SEPOLIA_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
 export const EXPLORER = "https://sepolia.etherscan.io";
 export const FAUCET_HINT = "https://cloud.google.com/application/web3/faucet/ethereum/sepolia";
 export const RT_URL: string = import.meta.env.VITE_RT_URL ?? "ws://localhost:8787/ws";
+/** Gas drip for guest players lives on the same server as presence: ws(s)://host/ws -> http(s)://host/drip. */
+export const DRIP_URL = RT_URL.replace(/^ws/, "http").replace(/\/ws\/?$/, "") + "/drip";
+
+// Session keys (docs/FE_INTEGRATION_SESSIONS.md): one MetaMask confirmation buys a day of pop-up-free play.
+export const SESSION_HOURS = 24;
+export const SESSION_VALUE_ETH = "0.0003"; // forwarded to the key for gas
+export const SESSION_REUSE_MARGIN_S = 600; // reuse a stored key only if it is valid for at least 10 more minutes
 
 // Sepolia's base fee is ~20 wei; wallet default tips would overpay by orders of magnitude (SPIKE_LOG S16, S20).
 export const FEES = { maxFeePerGas: 200_000n, maxPriorityFeePerGas: 100_000n } as const;

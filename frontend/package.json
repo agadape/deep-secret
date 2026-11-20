@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "sync": "node scripts/sync-contracts.mjs",
+    "bake": "node scripts/bake-terrain.mjs",
     "dev": "npm run sync && vite --port 5173 --strictPort",
     "build": "npm run sync && tsc --noEmit && vite build",
     "preview": "vite preview --port 4173 --strictPort",
