@@ -41,6 +41,7 @@ type SambarCfg = {
   minThiefCasts: number;
   shieldCasts: number;
   minEmber: number;
+  ghostPer256: number;
 };
 const DEMO_SAMBAR: SambarCfg = {
   snatchBait: 5n,
@@ -54,7 +55,36 @@ const DEMO_SAMBAR: SambarCfg = {
   minThiefCasts: 2,
   shieldCasts: 3,
   minEmber: 3,
+  ghostPer256: 0, // deterministic tests; the ghost net has its own test
 };
+
+type Signable = { address: string; signingKey?: { sign: (d: string) => { v: number; r: string; s: string } } };
+/** The key's co-signature on its own registration; an address with no key we hold gets an invalid signature. */
+async function sessionSig(game: { getAddress: () => Promise<string> }, player: string, key: Signable, expiresAt: number) {
+  const { chainId } = await ethers.provider.getNetwork();
+  const digest = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256", "address", "uint64"],
+      [await game.getAddress(), chainId, player, expiresAt],
+    ),
+  );
+  if (!key.signingKey) return [27, ethers.ZeroHash, ethers.ZeroHash] as const;
+  const sig = key.signingKey.sign(digest);
+  return [sig.v, sig.r, sig.s] as const;
+}
+/** authorizeSession sent by `who`, co-signed by `key` (or by `opts.signer` to forge it). */
+async function authSession(
+  ctx: Ctx,
+  who: HardhatEthersSigner | { address: string },
+  key: Signable,
+  expiresAt: number,
+  opts: { value?: bigint; signer?: Signable } = {},
+) {
+  const [v, r, sg] = await sessionSig(ctx.game, who.address, opts.signer ?? key, expiresAt);
+  return ctx.game
+    .connect(who as HardhatEthersSigner)
+    .authorizeSession(key.address, expiresAt, v, r, sg, opts.value ? { value: opts.value } : {});
+}
 
 async function deploy(overrides: SeasonOverrides = {}) {
   const [deployer] = await ethers.getSigners();
@@ -395,9 +425,9 @@ describe("DeepSecretGame", function () {
     async function newKey() {
       return ethers.Wallet.createRandom().connect(ethers.provider);
     }
-    async function authorize(ctx: Ctx, who: HardhatEthersSigner, key: { address: string }, seconds = 3600) {
+    async function authorize(ctx: Ctx, who: HardhatEthersSigner, key: Signable, seconds = 3600) {
       const expiresAt = (await time.latest()) + seconds;
-      await ctx.game.connect(who).authorizeSession(key.address, expiresAt, { value: ethers.parseEther("0.01") });
+      await authSession(ctx, who, key, expiresAt, { value: ethers.parseEther("0.01") });
       return expiresAt;
     }
 
@@ -405,7 +435,7 @@ describe("DeepSecretGame", function () {
       const ctx = await deploy();
       const key = await newKey();
       const expiresAt = (await time.latest()) + 3600;
-      await expect(ctx.game.connect(alice).authorizeSession(key.address, expiresAt, { value: ethers.parseEther("0.01") }))
+      await expect(authSession(ctx, alice, key, expiresAt, { value: ethers.parseEther("0.01") }))
         .to.emit(ctx.game, "SessionAuthorized")
         .withArgs(alice.address, key.address, expiresAt, 0);
       expect(await ethers.provider.getBalance(key.address)).to.eq(ethers.parseEther("0.01"));
@@ -455,7 +485,7 @@ describe("DeepSecretGame", function () {
       await ctx.game.connect(alice).claimStarter();
       await ctx.game.connect(alice).cast(0);
       const key = await newKey();
-      await expect(ctx.game.connect(alice).authorizeSession(key.address, (await time.latest()) + 3600))
+      await expect(authSession(ctx, alice, key, (await time.latest()) + 3600))
         .to.emit(ctx.game, "SessionAuthorized")
         .withArgs(alice.address, key.address, anyUint, 5);
       const f = await ctx.game.getFish(3);
@@ -490,27 +520,36 @@ describe("DeepSecretGame", function () {
       const ctx = await deploy();
       const now = await time.latest();
       const key = await newKey();
-      await expect(ctx.game.connect(alice).authorizeSession(alice.address, now + 60)).to.be.revertedWithCustomError(
-        ctx.game,
-        "BadSession",
-      );
-      await expect(ctx.game.connect(alice).authorizeSession(key.address, now + 8 * 24 * 3600)).to.be.revertedWithCustomError(
-        ctx.game,
-        "BadSession",
-      );
-      await expect(ctx.game.connect(alice).authorizeSession(ctx.gameAddress, now + 60)).to.be.revertedWithCustomError(
-        ctx.game,
-        "BadSession",
-      );
+      const bad = (p: Promise<unknown>) => expect(p).to.be.revertedWithCustomError(ctx.game, "BadSession");
+      await bad(authSession(ctx, alice, alice, now + 60));
+      await bad(authSession(ctx, alice, key, now + 8 * 24 * 3600));
+      await bad(authSession(ctx, alice, { address: ctx.gameAddress }, now + 60));
       await authorize(ctx, alice, key);
-      await expect(ctx.game.connect(bob).authorizeSession(key.address, now + 600)).to.be.revertedWithCustomError(
+      await bad(authSession(ctx, bob, key, now + 600)); // the key already belongs to alice
+      const third = await newKey();
+      await bad(authSession(ctx, key, third, now + 600)); // a session key cannot own sessions
+    });
+
+    it("refuses to bind an address that did not co-sign (no locking other players out)", async function () {
+      const ctx = await deploy();
+      const now = await time.latest();
+      const victimKey = await newKey(); // stands in for another player's fresh wallet
+      const attacker = await newKey();
+      await expect(authSession(ctx, bob, victimKey, now + 600, { signer: attacker })).to.be.revertedWithCustomError(
         ctx.game,
         "BadSession",
       );
-      await expect(ctx.game.connect(key).authorizeSession(carol.address, now + 600)).to.be.revertedWithCustomError(
+      // a signature for another player or another expiry does not carry over
+      const [v, r, sg] = await sessionSig(ctx.game, alice.address, victimKey, now + 600);
+      await expect(ctx.game.connect(bob).authorizeSession(victimKey.address, now + 600, v, r, sg)).to.be.revertedWithCustomError(
         ctx.game,
         "BadSession",
       );
+      await expect(ctx.game.connect(alice).authorizeSession(victimKey.address, now + 601, v, r, sg)).to.be.revertedWithCustomError(
+        ctx.game,
+        "BadSession",
+      );
+      expect(await ctx.game.playerOfKey(victimKey.address)).to.eq(ethers.ZeroAddress);
     });
   });
 
@@ -560,7 +599,8 @@ describe("DeepSecretGame", function () {
       const enc = await fhevm.createEncryptedInput(ctx.gameAddress, alice.address).add32(Number(target.id)).encrypt();
       await expect(ctx.game.connect(alice).setNet(enc.handles[0], enc.inputProof)).to.emit(ctx.game, "NetSet");
       const aliceAfterNet = await balanceOf(ctx, alice);
-      const net = (await ctx.game.player(alice.address)).netFish;
+      const net = (await ctx.game.player(alice.address)).netNext;
+      await time.increase(21); // a new net arms after wetSeconds
       expect(await fhevm.userDecryptEuint(FhevmType.euint32, net, ctx.gameAddress, alice)).to.eq(target.id);
       await expect(fhevm.userDecryptEuint(FhevmType.euint32, net, ctx.gameAddress, bob)).to.be.rejected;
 
@@ -593,6 +633,7 @@ describe("DeepSecretGame", function () {
       const caught = aliceFish[2];
       const enc = await fhevm.createEncryptedInput(ctx.gameAddress, alice.address).add32(Number(caught.id)).encrypt();
       await ctx.game.connect(alice).setNet(enc.handles[0], enc.inputProof);
+      await time.increase(21);
       await ctx.game.connect(bob).snatch(alice.address, aliceFish[4].id); // first snatch also breaks bob's shield (public)
       const okRc = await (await ctx.game.connect(bob).snatch(alice.address, aliceFish[3].id)).wait();
       const failRc = await (await ctx.game.connect(bob).snatch(alice.address, caught.id)).wait();
@@ -673,12 +714,62 @@ describe("DeepSecretGame", function () {
       await expect(ctx.game.restockNpc()).to.emit(ctx.game, "NpcRestocked");
     });
 
+    it("arms a new net only after wetSeconds, so it cannot be slipped in front of a pending snatch", async function () {
+      const { ctx, aliceFish } = await island();
+      const target = aliceFish[0];
+      const enc = await fhevm.createEncryptedInput(ctx.gameAddress, alice.address).add32(Number(target.id)).encrypt();
+      await ctx.game.connect(alice).setNet(enc.handles[0], enc.inputProof);
+      const newId = await ctx.game.fishCount();
+      await ctx.game.connect(bob).snatch(alice.address, target.id); // next block: the net is not armed yet
+      expect(await dbg32((await ctx.game.getFish(newId)).packed)).to.eq(target.packed);
+    });
+
+    it("hides Secret immunity behind a public-odds ghost net", async function () {
+      const { ctx, aliceFish } = await island({
+        sambar: { ghostPer256: 255, thiefCooldown: 0, pairCooldown: 0, victimCooldown: 0 },
+      });
+      let sandals = 0;
+      for (const target of aliceFish.slice(0, 3)) {
+        const before = await balanceOf(ctx, alice);
+        const newId = await ctx.game.fishCount();
+        await ctx.game.connect(bob).snatch(alice.address, target.id);
+        const got = await dbg32((await ctx.game.getFish(newId)).packed);
+        const kept = await dbg32((await ctx.game.getFish(target.id)).packed);
+        // exactly one side holds the fish, and a guarded fish pays its owner the bait
+        expect(got === 0n ? kept : got).to.eq(target.packed);
+        expect(await balanceOf(ctx, alice)).to.eq(before + (got === 0n ? 5n : 0n));
+        if (got === 0n) sandals++;
+      }
+      expect(sandals).to.be.gte(2); // 255/256 per snatch
+    });
+
+    it("blocks player-to-player Pearl transfers (no farming starter coins with sybils)", async function () {
+      const ctx = await deploy();
+      await ctx.game.connect(alice).claimStarter();
+      const bal = await ctx.coin.confidentialBalanceOf(alice.address);
+      await expect(
+        ctx.coin.connect(alice)["confidentialTransfer(address,bytes32)"](bob.address, bal),
+      ).to.be.revertedWithCustomError(ctx.coin, "TransfersDisabled");
+    });
+
+    it("keeps counting Pak Kumis's leftovers after a restock", async function () {
+      const { ctx } = await island({ sambar: { thiefCooldown: 0, npcRestockCooldown: 0 } });
+      const npc = await ctx.game.PAK_KUMIS();
+      await ctx.game.restockNpc();
+      await time.increase(25);
+      const ids = await ctx.game.fishIdsOf(npc);
+      for (const id of ids.slice(0, 4)) await ctx.game.connect(bob).snatch(npc, id);
+      await ctx.game.restockNpc(); // 2 left + 6 new
+      expect(await ctx.game.npcFresh()).to.eq(8);
+      await time.increase(25);
+      for (const id of (await ctx.game.fishIdsOf(npc)).slice(4)) await ctx.game.connect(bob).snatch(npc, id);
+      expect(await ctx.game.npcFresh()).to.eq(0);
+    });
+
     it("works through a session key, on behalf of the player", async function () {
       const { ctx, aliceFish } = await island();
       const key = ethers.Wallet.createRandom().connect(ethers.provider);
-      await ctx.game
-        .connect(bob)
-        .authorizeSession(key.address, (await time.latest()) + 3600, { value: ethers.parseEther("0.01") });
+      await authSession(ctx, bob, key, (await time.latest()) + 3600, { value: ethers.parseEther("0.01") });
       const newId = await ctx.game.fishCount();
       await expect(ctx.game.connect(key).snatch(alice.address, aliceFish[0].id))
         .to.emit(ctx.game, "Snatched")

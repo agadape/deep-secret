@@ -86,3 +86,21 @@ Error: `SambarBlocked(uint8 reason)` — cek aturan di klien sebelum mengirim su
 | Gas `restockNpc` | terukur 11,84 juta (estimasi 14,3 juta); batas 16.000.000 (cap per transaksi Sepolia 16.777.216) |
 | Input terenkripsi `setNet` | Bukti input terikat pada pasangan (kontrak, pengirim transaksi). Kalau `setNet` dikirim oleh kunci sesi, buat input dengan alamat **kunci**. |
 | S25 (belum) | Ukur enkripsi `euint32` + transaksi `setNet` dari browser di bawah COOP/COEP; target ≤ 25 s total |
+
+## Perubahan dari review kontrak 20 Nov (sudah di `main`, BELUM di-deploy)
+
+Detail: [AUDIT_2026-11-20.md](AUDIT_2026-11-20.md). Alamat di atas masih kontrak lama sampai deploy ulang; begitu deploy ulang, bagian ini berlaku:
+
+1. **`authorizeSession(key, expiresAt, v, r, s)`**: kunci sesi ikut menandatangani. Di klien, dengan kunci lokal viem:
+   ```ts
+   const digest = keccak256(encodeAbiParameters(
+     [{ type: "address" }, { type: "uint256" }, { type: "address" }, { type: "uint64" }],
+     [GAME_ADDRESS, BigInt(sepolia.id), playerAddress, expiresAt]));
+   const sig = parseSignature(await keyAccount.sign({ hash: digest })); // tanda tangan hash mentah, bukan signMessage
+   // lalu MetaMask mengirim authorizeSession(key, expiresAt, Number(sig.v), sig.r, sig.s) dengan value gas
+   ```
+   Tanpa ini siapa saja bisa "mengunci" dompet orang lain.
+2. **Jaring baru aktif setelah `wetSeconds`** (20 s): `setNet` menyimpan ke `player().netNext` + `netAt`; jaring lama (`netFish`) tetap berlaku sampai itu. UI: tampilkan "Jaring siap dalam 20 s".
+3. **Jaring hantu**: setiap sambaran juga bisa gagal dengan peluang publik `sambarConfig().ghostPer256 / 256` (demo 32/256 = 1 dari 8), dan pemilik ikan dapat umpannya. Teks aturan: "Laut kadang ikut menjaga ikan." Sandal Jepit tidak lagi pasti berarti Secret.
+4. **Mutiara tidak bisa ditransfer** antar-pemain (`TransfersDisabled`). Jangan tampilkan tombol kirim koin.
+5. **Pamerkan hanya untuk Secret**: pamer ikan non-Secret membuka isinya ke publik dan mengembalikannya ke ember (bisa disambar). Tombol Pamerkan cukup muncul untuk ikan yang didekripsi sebagai Secret.

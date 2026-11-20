@@ -20,6 +20,7 @@ contract PearlCoin is ZamaEthereumConfig, ERC7984, Ownable {
     event GameSet(address indexed game);
 
     error OnlyGame();
+    error TransfersDisabled();
     error GameAlreadySet();
 
     constructor(address owner_) ERC7984("Deep Secret Pearl", "PEARL", "") Ownable(owner_) {}
@@ -57,7 +58,9 @@ contract PearlCoin is ZamaEthereumConfig, ERC7984, Ownable {
 
     /// @dev Every new balance handle is also readable by the holder's live session key, so the HUD can show the
     ///      balance without a wallet signature during a session.
+    ///      Player-to-player transfers are disabled: starter coins must not be farmed by sybils and funnelled.
     function _update(address from, address to, euint64 amount) internal override returns (euint64 transferred) {
+        if (from != address(0) && to != address(0)) revert TransfersDisabled();
         transferred = super._update(from, to, amount);
         _shareWithSessionKey(from);
         _shareWithSessionKey(to);

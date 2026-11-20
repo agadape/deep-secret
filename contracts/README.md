@@ -25,11 +25,13 @@ Confidential multiplayer fishing on the Zama Protocol (FHEVM), Ethereum Sepolia.
 | A flexed Secret's attributes | Public, with a decryption proof checked on-chain |
 | Odds table, rod levels, zones, casts, sells (which fish ids), who targeted which fish id, Sambar rules and cooldowns | Public |
 
+Internal review and fixes: [docs/AUDIT_2026-11-20.md](../docs/AUDIT_2026-11-20.md). The fixes are on `main` but not yet deployed: the Sepolia addresses below still run the pre-review code.
+
 ## Commands
 
 ```bash
 npm install
-npm test                                    # 34 tests on the FHEVM mock
+npm test                                    # 39 tests on the FHEVM mock
 npx hardhat deploy --network sepolia        # needs .env, see .env.example
 npx hardhat run scripts/smoke.ts --network sepolia
 npx hardhat run scripts/smoke-session.ts --network sepolia   # one wallet tx, then a session key plays

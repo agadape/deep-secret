@@ -78,6 +78,8 @@ Tapi kekebalan ini **tidak boleh jadi detektor Secret**. Karena itu:
 - Umpan dalam kasus Secret terbakar (tidak ke korban). Penyambar tidak bisa melihat saldo korban, jadi tetap tidak bisa membedakan.
 - Satu ikan cuma bisa diincar sekali (§1.2), jadi tidak bisa "diuji berkali-kali" sampai ketahuan (lihat serangan probing di §7).
 - Kontrak tidak pernah revert berdasarkan data terenkripsi (memang tidak bisa di FHEVM). Kalau kita pakai flag Secret publik lalu revert, `eth_call` akan jadi alat deteksi Secret gratis.
+- **Jaring hantu (tambahan review 20 Nov).** Status `hasNet` itu publik. Jadi di ember tanpa jaring, Sandal Jepit dari sambaran yang terbayar dulu hanya bisa berarti Secret. Karena itu setiap sambaran juga dijaga "laut" dengan peluang publik `ghostPer256` (demo 32/256), yang diundi terenkripsi. Kalau laut yang menjaga, pemilik ikan dapat umpan seperti kena jaring. Sandal Jepit sekarang selalu berarti "jaring, laut, atau Secret".
+- **Jaring baru baru aktif setelah `wetSeconds`.** Ini mencegah korban yang online memasang jaring tepat di depan sambaran yang masih di mempool. Detail: [AUDIT_2026-11-20.md](AUDIT_2026-11-20.md).
 
 ### 1.5 Pertahanan pemilik ember
 

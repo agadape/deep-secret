@@ -33,7 +33,17 @@ const drip = createDrip({
   amountEth: process.env.DRIP_AMOUNT_ETH,
   dailyBudgetEth: process.env.DRIP_DAILY_BUDGET_ETH,
 });
-const CORS = { "access-control-allow-origin": process.env.ALLOWED_ORIGIN ?? "*", "access-control-allow-headers": "content-type" };
+// Behind a hosting proxy the left-most X-Forwarded-For entry is whatever the client sent; only the entry the
+// proxy appended (right-most) or the platform's own header can be trusted for the per-IP drip limit.
+const IP_HEADER = (process.env.CLIENT_IP_HEADER ?? "").toLowerCase(); // e.g. "fly-client-ip", "cf-connecting-ip"
+function clientIp(req) {
+  if (IP_HEADER && req.headers[IP_HEADER]) return String(req.headers[IP_HEADER]).trim();
+  const xff = String(req.headers["x-forwarded-for"] ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  return xff.length ? xff[xff.length - 1] : String(req.socket.remoteAddress ?? "");
+}
+const ORIGINS = (process.env.ALLOWED_ORIGIN ?? "*").split(",").map((o) => o.trim());
+const corsOrigin = (req) => (ORIGINS.includes("*") ? "*" : ORIGINS.includes(req.headers.origin) ? req.headers.origin : ORIGINS[0]);
+const CORS = { "access-control-allow-headers": "content-type", vary: "origin" };
 
 const loginMessage = (nonce) => `Deep Secret — masuk ke pulau\n\nTanda tangan ini gratis dan tidak mengirim transaksi.\nNonce: ${nonce}`;
 
@@ -60,12 +70,13 @@ const publicView = (p) => ({ id: p.id, name: p.name, x: p.x, y: p.y, dir: p.dir,
 const page = readFileSync(new URL("./public/index.html", import.meta.url));
 const httpServer = createServer(async (req, res) => {
   if (req.url === "/drip") {
+    const cors = { ...CORS, "access-control-allow-origin": corsOrigin(req) };
     if (req.method === "OPTIONS") {
-      res.writeHead(204, { ...CORS, "access-control-allow-methods": "POST" });
+      res.writeHead(204, { ...cors, "access-control-allow-methods": "POST" });
       return res.end();
     }
     const reply = (code, body) => {
-      res.writeHead(code, { ...CORS, "content-type": "application/json" });
+      res.writeHead(code, { ...cors, "content-type": "application/json" });
       res.end(JSON.stringify(body));
     };
     if (req.method !== "POST") return reply(405, { status: "post_only" });
@@ -77,7 +88,7 @@ const httpServer = createServer(async (req, res) => {
     }
     try {
       const { address } = JSON.parse(body || "{}");
-      const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
+      const ip = clientIp(req);
       const [code, out] = await drip.request(String(address ?? ""), ip);
       console.log(`[drip] ${address} → ${out.status}${out.tx ? " " + out.tx : ""}`);
       return reply(code, out);
@@ -99,7 +110,13 @@ const httpServer = createServer(async (req, res) => {
   res.end(page);
 });
 
-const wss = new WebSocketServer({ server: httpServer, path: "/ws", maxPayload: 1024 });
+const wss = new WebSocketServer({
+  server: httpServer,
+  path: "/ws",
+  maxPayload: 1024,
+  // browsers always send Origin; refuse other sites' pages when ALLOWED_ORIGIN is set
+  verifyClient: ({ origin }) => ORIGINS.includes("*") || !origin || ORIGINS.includes(origin),
+});
 
 wss.on("connection", (ws) => {
   const nonce = randomBytes(16).toString("hex");
@@ -181,28 +198,34 @@ setInterval(() => {
   }
 }, TICK_MS);
 
-// Public contract events → every room. The real game listens for Flexed (and Snatched); the spike contract emits Cast.
+// Public contract events → every room: casts, flexes (the only catch announcement) and snatch attempts.
 const chain = createPublicClient({ chain: sepolia, transport: http(RPC) });
 chain.watchContractEvent({
   address: GAME,
   abi: parseAbi([
     "event Cast(address indexed player, uint8 zoneId, uint256 firstFishId)",
     "event Flexed(address indexed player, uint256 indexed fishId, uint256 tokenId, uint8 species, uint8 aura, uint8 weight, uint32 serial)",
+    // public attempt only (who, whom, which fish id); the outcome stays encrypted
+    "event Snatched(address indexed thief, address indexed victim, uint256 targetFishId, uint256 newFishId)",
   ]),
   pollingInterval: 4000,
   onLogs: (logs) => {
     for (const l of logs) {
+      const a = l.args;
+      const detail =
+        l.eventName === "Flexed"
+          ? { player: a.player, species: a.species, serial: a.serial, tokenId: String(a.tokenId) }
+          : l.eventName === "Snatched"
+            ? { player: a.thief, victim: a.victim, targetFishId: String(a.targetFishId), newFishId: String(a.newFishId) }
+            : { player: a.player, firstFishId: String(a.firstFishId) };
       const msg = {
         t: "chain",
         event: l.eventName,
-        player: l.args.player,
-        ...(l.eventName === "Flexed"
-          ? { species: l.args.species, serial: l.args.serial, tokenId: String(l.args.tokenId) }
-          : { firstFishId: String(l.args.firstFishId) }),
+        ...detail,
         tx: l.transactionHash,
         serverTs: Date.now(),
       };
-      console.log(`[chain] ${l.eventName} by ${l.args.player} in tx ${l.transactionHash}`);
+      console.log(`[chain] ${l.eventName} by ${detail.player} in tx ${l.transactionHash}`);
       for (const room of rooms.values()) broadcast(room, msg);
     }
   },
@@ -214,3 +237,12 @@ httpServer.listen(PORT, () =>
     `rt-spike listening on http://localhost:${PORT} (ws /ws, POST /drip), room cap ${ROOM_CAP}, drip ${drip ? "from " + drip.from : "disabled"}`,
   ),
 );
+
+// hosts stop containers with SIGTERM: close sockets cleanly so clients reconnect to the new instance
+for (const sig of ["SIGTERM", "SIGINT"]) {
+  process.on(sig, () => {
+    for (const ws of wss.clients) ws.close(1012, "server restart");
+    httpServer.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  });
+}

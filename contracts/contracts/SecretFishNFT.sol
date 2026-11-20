@@ -49,7 +49,7 @@ contract SecretFishNFT is ERC721, Ownable {
         if (msg.sender != game) revert OnlyGame();
         tokenId = ++totalMinted;
         meta[tokenId] = m;
-        _safeMint(to, tokenId);
+        _mint(to, tokenId); // not _safeMint: a reverting receiver must not strand a flex
     }
 
     function speciesName(uint8 species) public pure returns (string memory) {

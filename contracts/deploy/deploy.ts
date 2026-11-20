@@ -31,6 +31,7 @@ const SAMBAR = {
   minThiefCasts: 2,
   shieldCasts: 3,
   minEmber: 3,
+  ghostPer256: 32, // 1 in 8 unnetted fish is guarded anyway, so a Sandal never proves a Secret (audit H-2)
 };
 
 // PearlCoin and SecretFishNFT bind to one game forever (setGame is one-time). To redeploy the game, move the

@@ -59,7 +59,9 @@ contract DeepSecretGame is ZamaEthereumConfig {
         uint64 lastSnatchAt; // as thief
         uint64 lastTargetedAt; // as victim
         uint64 windowStart; // start of the victim's current one-hour window
-        euint32 netFish; // fish id guarded by the hidden net
+        euint32 netFish; // fish id guarded by the hidden net (armed)
+        euint32 netNext; // net placed by setNet, armed once netAt + wetSeconds has passed
+        uint64 netAt;
     }
 
     /// @dev Public, season-locked rules of Sambar Ember (docs/SAMBAR_EMBER.md §1.7).
@@ -75,6 +77,7 @@ contract DeepSecretGame is ZamaEthereumConfig {
         uint16 minThiefCasts;
         uint16 shieldCasts;
         uint8 minEmber;
+        uint8 ghostPer256; // chance out of 256 that an unnetted fish is guarded anyway
     }
 
     /// @dev A short-lived key that may play on the player's behalf, so the wallet signs once per session.
@@ -206,9 +209,14 @@ contract DeepSecretGame is ZamaEthereumConfig {
 
     /// @notice Let `key` play for you until `expiresAt`: cast, sell, upgrade and flex without a wallet popup.
     ///         Fish, coins and NFTs stay yours. The key gets read access to your newest bucket fish and to your
-    ///         balance, and any ETH sent along is forwarded to it for gas.
-    function authorizeSession(address key, uint64 expiresAt) external payable {
+    ///         balance, and any ETH sent along is forwarded to it for gas. The key signs
+    ///         keccak256(abi.encode(game, chainid, player, expiresAt)) (raw digest), so nobody can bind an address
+    ///         they do not control (that would lock its owner out of the game).
+    function authorizeSession(address key, uint64 expiresAt, uint8 v, bytes32 r, bytes32 s) external payable {
         if (key == address(0) || key == msg.sender || key.code.length != 0) revert BadSession();
+        if (ecrecover(keccak256(abi.encode(address(this), block.chainid, msg.sender, expiresAt)), v, r, s) != key) {
+            revert BadSession();
+        }
         if (playerOfKey[msg.sender] != address(0)) revert BadSession(); // a session key cannot own sessions
         if (expiresAt <= block.timestamp || expiresAt > block.timestamp + MAX_SESSION) revert BadSession();
         address current = playerOfKey[key];
@@ -387,7 +395,10 @@ contract DeepSecretGame is ZamaEthereumConfig {
         PlayerState storage v = _players[victim];
 
         ebool paid = _charge(thief, _sambar.snatchBait);
-        ebool hit = v.hasNet ? FHE.eq(v.netFish, uint32(fishId)) : FHE.asEbool(false);
+        _armNet(v);
+        // the sea guards some fish at random, so a Sandal never proves the target was a Secret, even without a net
+        ebool hit = FHE.lt(FHE.randEuint8(), _sambar.ghostPer256);
+        if (v.hasNet) hit = FHE.or(hit, FHE.eq(v.netFish, uint32(fishId)));
         ebool ok = FHE.and(paid, FHE.and(FHE.not(hit), FHE.not(f.isSecret)));
 
         newFishId = _giveSack(thief, f, ok);
@@ -411,11 +422,12 @@ contract DeepSecretGame is ZamaEthereumConfig {
         euint32 id = FHE.fromExternal(encFishId, proof);
         ebool paid = _charge(who, _sambar.netCost);
         PlayerState storage p = _players[who];
+        _armNet(p);
         euint32 previous = p.hasNet ? p.netFish : FHE.asEuint32(type(uint32).max);
-        p.netFish = FHE.select(paid, id, previous);
-        p.hasNet = true;
-        FHE.allowThis(p.netFish);
-        FHE.allow(p.netFish, who);
+        p.netNext = FHE.select(paid, id, previous);
+        p.netAt = uint64(block.timestamp);
+        FHE.allowThis(p.netNext);
+        FHE.allow(p.netNext, who);
         emit NetSet(who);
     }
 
@@ -435,12 +447,20 @@ contract DeepSecretGame is ZamaEthereumConfig {
         }
         PlayerState storage n = _players[PAK_KUMIS];
         n.emberCount += NPC_FISH;
-        npcFresh = NPC_FISH;
+        npcFresh += NPC_FISH;
         // the net lands on one of 8 ids starting at the first new fish: 6 of 8 guard a fish
         n.netFish = FHE.add(FHE.asEuint32(FHE.randEuint8(8)), uint32(first));
         n.hasNet = true;
         FHE.allowThis(n.netFish);
         emit NpcRestocked(PAK_KUMIS, first, NPC_FISH);
+    }
+
+    function _armNet(PlayerState storage p) private {
+        if (p.netAt != 0 && block.timestamp >= p.netAt + _sambar.wetSeconds) {
+            p.netFish = p.netNext;
+            p.hasNet = true;
+            p.netAt = 0;
+        }
     }
 
     function sambarConfig() external view returns (SambarConfig memory) {
@@ -593,10 +613,6 @@ contract DeepSecretGame is ZamaEthereumConfig {
         euint32 packed = FHE.select(ok, f.packed, FHE.asEuint32(0));
         euint64 price = FHE.select(ok, f.price, FHE.asEuint64(0));
         _grantRead(packed, price, thief);
-        if (msg.sender != thief) {
-            FHE.allow(packed, msg.sender);
-            FHE.allow(price, msg.sender);
-        }
         ebool notSecret = FHE.asEbool(false);
         FHE.allowThis(notSecret);
         id = _fish.length;
@@ -638,7 +654,8 @@ contract DeepSecretGame is ZamaEthereumConfig {
     /// @dev Give a new session key read access to the newest fish still in the bucket (bounded for gas).
     function _shareBucket(address who, address key) private returns (uint256 shared) {
         uint256[] storage ids = _fishIds[who];
-        for (uint256 i = ids.length; i > 0 && shared < SESSION_SHARE_LIMIT; i--) {
+        uint256 stop = ids.length > 3 * SESSION_SHARE_LIMIT ? ids.length - 3 * SESSION_SHARE_LIMIT : 0;
+        for (uint256 i = ids.length; i > stop && shared < SESSION_SHARE_LIMIT; i--) {
             Fish storage f = _fish[ids[i - 1]];
             if (f.state != STATE_EMBER && f.state != STATE_FLEX_PENDING) continue;
             FHE.allow(f.packed, key);
