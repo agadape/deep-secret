@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 pragma solidity ^0.8.27;
 
-import {FHE, ebool, euint8, euint32, euint64} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, ebool, euint8, euint32, euint64, externalEuint32} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {PearlCoin} from "./PearlCoin.sol";
 import {SecretFishNFT} from "./SecretFishNFT.sol";
@@ -52,6 +52,29 @@ contract DeepSecretGame is ZamaEthereumConfig {
         uint32 emberCount; // Sambar hook: fish in state EMBER
         bool upgradePending;
         ebool upgradePaid;
+        // Sambar Ember
+        bool shieldBroken; // a newcomer who snatches from a player loses the newcomer shield
+        bool hasNet;
+        uint8 targetedInWindow;
+        uint64 lastSnatchAt; // as thief
+        uint64 lastTargetedAt; // as victim
+        uint64 windowStart; // start of the victim's current one-hour window
+        euint32 netFish; // fish id guarded by the hidden net
+    }
+
+    /// @dev Public, season-locked rules of Sambar Ember (docs/SAMBAR_EMBER.md §1.7).
+    struct SambarConfig {
+        uint64 snatchBait;
+        uint64 netCost;
+        uint32 thiefCooldown;
+        uint32 pairCooldown;
+        uint32 victimCooldown;
+        uint32 wetSeconds;
+        uint32 npcRestockCooldown;
+        uint8 maxTargetedPerHour;
+        uint16 minThiefCasts;
+        uint16 shieldCasts;
+        uint8 minEmber;
     }
 
     /// @dev A short-lived key that may play on the player's behalf, so the wallet signs once per session.
@@ -76,6 +99,13 @@ contract DeepSecretGame is ZamaEthereumConfig {
     uint8 public constant MAX_NAME_BYTES = 16;
     uint64 public constant MAX_SESSION = 7 days;
     uint256 public constant SESSION_SHARE_LIMIT = 40; // newest bucket fish shared with a new key
+    /// @notice Pak Kumis, the NPC whose bucket anyone can practise on. No key exists for this address.
+    address public constant PAK_KUMIS = address(uint160(0xF15A0001));
+    uint8 public constant NPC_FISH = 6;
+
+    uint8 public constant ORIGIN_CAST = 0;
+    uint8 public constant ORIGIN_SNATCHED = 1;
+    uint8 public constant ORIGIN_NPC = 2;
 
     uint8 public constant STATE_EMBER = 0;
     uint8 public constant STATE_SOLD = 1;
@@ -104,6 +134,11 @@ contract DeepSecretGame is ZamaEthereumConfig {
     mapping(address player => Session) private _sessions;
     mapping(address key => address player) public playerOfKey;
 
+    SambarConfig private _sambar;
+    mapping(address thief => mapping(address victim => uint64)) public lastPairSnatch;
+    uint64 public lastNpcRestock;
+    uint8 public npcFresh; // Pak Kumis's fish nobody has targeted yet
+
     // ---------------------------------------------------------------- events
 
     event StarterClaimed(address indexed player);
@@ -125,6 +160,11 @@ contract DeepSecretGame is ZamaEthereumConfig {
     event FlexRejected(address indexed player, uint256 indexed fishId);
     event SessionAuthorized(address indexed player, address indexed key, uint64 expiresAt, uint256 sharedFish);
     event SessionRevoked(address indexed player, address indexed key);
+    /// @notice Who snatched from whom, which fish was targeted and which record the thief received. Never the result.
+    event Snatched(address indexed thief, address indexed victim, uint256 targetFishId, uint256 newFishId);
+    event NetSet(address indexed owner);
+    event NpcRestocked(address indexed npc, uint256 firstFishId, uint8 count);
+    event ShieldBroken(address indexed player);
     event SeasonEndRequested(uint32 season, bytes32 secretsLeftHandle);
     event SeasonEnded(uint32 season, uint8 secretsLeft, uint8 secretsCaught, uint32 secretsFlexed);
 
@@ -144,15 +184,20 @@ contract DeepSecretGame is ZamaEthereumConfig {
     error BadName();
     error BadSession();
     error SessionExpired(address key);
+    /// @dev 1 thief has not cast enough, 2 thief cooldown, 3 victim has the newcomer shield, 4 pair cooldown,
+    ///      5 victim cooldown, 6 victim hourly limit, 7 victim bucket too small, 8 fish not targetable,
+    ///      9 cannot snatch from yourself, 10 NPC restock not due
+    error SambarBlocked(uint8 reason);
 
     // ---------------------------------------------------------------- setup
 
-    constructor(PearlCoin coin_, SecretFishNFT nft_, SeasonConfig memory cfg) {
+    constructor(PearlCoin coin_, SecretFishNFT nft_, SeasonConfig memory cfg, SambarConfig memory sambar) {
         require(cfg.secretOneIn > 0 && cfg.legendOneIn > 0 && cfg.epicOneIn > 0 && cfg.rareOneIn > 0, "odds");
         require(cfg.endsAt > block.timestamp, "endsAt");
         coin = coin_;
         nft = nft_;
         _cfg = cfg;
+        _sambar = sambar;
         _secretsLeft = FHE.asEuint8(cfg.secretQuota);
         FHE.allowThis(_secretsLeft);
     }
@@ -224,7 +269,7 @@ contract DeepSecretGame is ZamaEthereumConfig {
         (euint32[5] memory r, ebool[5] memory secret) = _rollSecrets(o.secret, paid);
         first = _fish.length;
         for (uint8 i = 0; i < FISH_PER_CAST; i++) {
-            _rollFish(o, r[i], secret[i], paid, who);
+            _rollFish(o, r[i], secret[i], paid, who, msg.sender != who ? msg.sender : address(0), ORIGIN_CAST);
         }
         p.castCount += 1;
         p.emberCount += FISH_PER_CAST;
@@ -327,6 +372,79 @@ contract DeepSecretGame is ZamaEthereumConfig {
         });
         uint256 tokenId = nft.mint(f.owner, m);
         emit Flexed(f.owner, fishId, tokenId, m.species, m.aura, m.weight, m.serial);
+    }
+
+    // ---------------------------------------------------------------- Sambar Ember
+
+    /// @notice Pay a bait and blindly snatch one fish from someone's bucket. You always get a sack: the fish, or a
+    ///         Sandal Jepit if the slot was guarded by the owner's hidden net, was a Secret (immune), or you could not
+    ///         pay. Nobody but you learns which; the owner learns only about their own slot.
+    function snatch(address victim, uint256 fishId) external returns (uint256 newFishId) {
+        _requireOpen();
+        address thief = _actor();
+        Fish storage f = _checkSnatch(thief, victim, fishId);
+        bool npc = victim == PAK_KUMIS;
+        PlayerState storage v = _players[victim];
+
+        ebool paid = _charge(thief, _sambar.snatchBait);
+        ebool hit = v.hasNet ? FHE.eq(v.netFish, uint32(fishId)) : FHE.asEbool(false);
+        ebool ok = FHE.and(paid, FHE.and(FHE.not(hit), FHE.not(f.isSecret)));
+
+        newFishId = _giveSack(thief, f, ok);
+        // the victim's slot keeps its id but holds a Sandal Jepit if the snatch succeeded
+        f.packed = FHE.select(ok, FHE.asEuint32(0), f.packed);
+        f.price = FHE.select(ok, FHE.asEuint64(0), f.price);
+        _grantRead(f.packed, f.price, victim);
+
+        if (!npc) {
+            // a caught thief's bait goes to the victim; always minted (often 0) so success and failure look alike
+            euint64 reward = FHE.select(FHE.and(paid, hit), FHE.asEuint64(_sambar.snatchBait), FHE.asEuint64(0));
+            FHE.allowTransient(reward, address(coin));
+            coin.mint(victim, reward);
+        }
+        emit Snatched(thief, victim, fishId, newFishId);
+    }
+
+    /// @notice Hide your net under one fish id (encrypted input). Any id is allowed, so a net can also be a bluff.
+    function setNet(externalEuint32 encFishId, bytes calldata proof) external {
+        address who = _actor();
+        euint32 id = FHE.fromExternal(encFishId, proof);
+        ebool paid = _charge(who, _sambar.netCost);
+        PlayerState storage p = _players[who];
+        euint32 previous = p.hasNet ? p.netFish : FHE.asEuint32(type(uint32).max);
+        p.netFish = FHE.select(paid, id, previous);
+        p.hasNet = true;
+        FHE.allowThis(p.netFish);
+        FHE.allow(p.netFish, who);
+        emit NetSet(who);
+    }
+
+    /// @notice Refill Pak Kumis's practice bucket (anyone can call when it runs low): six fish from the Dermaga
+    ///         table without Secrets, and a net hidden by on-chain randomness.
+    function restockNpc() external returns (uint256 first) {
+        _requireOpen();
+        if (npcFresh >= 3 || block.timestamp < lastNpcRestock + _sambar.npcRestockCooldown) revert SambarBlocked(10);
+        lastNpcRestock = uint64(block.timestamp);
+        Odds memory o = oddsFor(0, 0);
+        o.secret = 0; // the NPC never holds Secrets and never touches the quota
+        ebool no = FHE.asEbool(false);
+        ebool yes = FHE.asEbool(true);
+        first = _fish.length;
+        for (uint8 i = 0; i < NPC_FISH; i++) {
+            _rollFish(o, FHE.randEuint32(), no, yes, PAK_KUMIS, address(0), ORIGIN_NPC);
+        }
+        PlayerState storage n = _players[PAK_KUMIS];
+        n.emberCount += NPC_FISH;
+        npcFresh = NPC_FISH;
+        // the net lands on one of 8 ids starting at the first new fish: 6 of 8 guard a fish
+        n.netFish = FHE.add(FHE.asEuint32(FHE.randEuint8(8)), uint32(first));
+        n.hasNet = true;
+        FHE.allowThis(n.netFish);
+        emit NpcRestocked(PAK_KUMIS, first, NPC_FISH);
+    }
+
+    function sambarConfig() external view returns (SambarConfig memory) {
+        return _sambar;
     }
 
     /// @notice After the season closes anyone can open the hidden Secret counter, proving the quota was respected.
@@ -435,6 +553,83 @@ contract DeepSecretGame is ZamaEthereumConfig {
         return owner_;
     }
 
+    /// @dev All public Sambar rules (docs/SAMBAR_EMBER.md §1.2), checked in plaintext so anyone can verify them.
+    function _checkSnatch(address thief, address victim, uint256 fishId) private returns (Fish storage f) {
+        if (thief == victim) revert SambarBlocked(9);
+        SambarConfig memory c = _sambar;
+        PlayerState storage t = _players[thief];
+        PlayerState storage v = _players[victim];
+        uint64 nowTs = uint64(block.timestamp);
+        if (t.castCount < c.minThiefCasts) revert SambarBlocked(1);
+        if (t.lastSnatchAt != 0 && nowTs < t.lastSnatchAt + c.thiefCooldown) revert SambarBlocked(2);
+        if (victim != PAK_KUMIS) {
+            if (v.castCount < c.shieldCasts && !v.shieldBroken) revert SambarBlocked(3);
+            uint64 lastPair = lastPairSnatch[thief][victim];
+            if (lastPair != 0 && nowTs < lastPair + c.pairCooldown) revert SambarBlocked(4);
+            if (v.lastTargetedAt != 0 && nowTs < v.lastTargetedAt + c.victimCooldown) revert SambarBlocked(5);
+            if (nowTs >= v.windowStart + 1 hours) {
+                v.windowStart = nowTs;
+                v.targetedInWindow = 0;
+            }
+            if (v.targetedInWindow >= c.maxTargetedPerHour) revert SambarBlocked(6);
+            if (v.emberCount < c.minEmber) revert SambarBlocked(7);
+            lastPairSnatch[thief][victim] = nowTs;
+            v.lastTargetedAt = nowTs;
+            v.targetedInWindow += 1;
+            if (!t.shieldBroken && t.castCount < c.shieldCasts) emit ShieldBroken(thief);
+            t.shieldBroken = true;
+        }
+        f = _fish[fishId];
+        if (f.owner != victim || f.state != STATE_EMBER || f.targeted || nowTs < f.caughtAt + c.wetSeconds) {
+            revert SambarBlocked(8);
+        }
+        f.targeted = true;
+        if (victim == PAK_KUMIS) npcFresh -= 1;
+        t.lastSnatchAt = nowTs;
+    }
+
+    /// @dev The thief's new record: the snatched fish if `ok`, otherwise a Sandal Jepit. Always created.
+    function _giveSack(address thief, Fish storage f, ebool ok) private returns (uint256 id) {
+        euint32 packed = FHE.select(ok, f.packed, FHE.asEuint32(0));
+        euint64 price = FHE.select(ok, f.price, FHE.asEuint64(0));
+        _grantRead(packed, price, thief);
+        if (msg.sender != thief) {
+            FHE.allow(packed, msg.sender);
+            FHE.allow(price, msg.sender);
+        }
+        ebool notSecret = FHE.asEbool(false);
+        FHE.allowThis(notSecret);
+        id = _fish.length;
+        _fishIds[thief].push(id);
+        _fish.push(
+            Fish({
+                owner: thief,
+                season: _cfg.number,
+                caughtAt: uint64(block.timestamp),
+                packed: packed,
+                price: price,
+                isSecret: notSecret,
+                state: STATE_EMBER,
+                origin: ORIGIN_SNATCHED,
+                targeted: false
+            })
+        );
+        _players[thief].emberCount += 1;
+    }
+
+    /// @dev This contract, the owner and the owner's live session key may read a fish record.
+    function _grantRead(euint32 packed, euint64 price, address owner_) private {
+        FHE.allowThis(packed);
+        FHE.allowThis(price);
+        FHE.allow(packed, owner_);
+        FHE.allow(price, owner_);
+        Session memory sn = _sessions[owner_];
+        if (sn.key != address(0) && sn.expiresAt > block.timestamp) {
+            FHE.allow(packed, sn.key);
+            FHE.allow(price, sn.key);
+        }
+    }
+
     function _ownedFish(uint256 fishId, address who) private view returns (Fish storage f) {
         f = _fish[fishId];
         if (f.owner != who) revert NotYourFish(fishId);
@@ -479,7 +674,26 @@ contract DeepSecretGame is ZamaEthereumConfig {
         paid = FHE.eq(burned, amount);
     }
 
-    function _rollFish(Odds memory o, euint32 r, ebool isSecret, ebool paid, address who) private {
+    function _rollFish(
+        Odds memory o,
+        euint32 r,
+        ebool isSecret,
+        ebool paid,
+        address who,
+        address reader,
+        uint8 origin
+    ) private {
+        (euint32 packed, euint64 price) = _rollAttributes(o, r, isSecret, paid);
+        _storeFish(packed, price, isSecret, who, reader, origin);
+    }
+
+    /// @dev Tier, species, weight, aura and sale price of one fish, all under encryption.
+    function _rollAttributes(
+        Odds memory o,
+        euint32 r,
+        ebool isSecret,
+        ebool paid
+    ) private returns (euint32 packed, euint64 price) {
         ebool isLegend = FHE.lt(r, o.legend);
         ebool isEpic = FHE.lt(r, o.epic);
         ebool isRare = FHE.lt(r, o.rare);
@@ -493,27 +707,36 @@ contract DeepSecretGame is ZamaEthereumConfig {
         ebool aura = FHE.lt(FHE.randEuint8(), 16);
         euint8 species = FHE.select(isSecret, FHE.randEuint8(2), FHE.randEuint8(4));
 
-        euint32 packed = FHE.asEuint32(tier);
+        packed = FHE.asEuint32(tier);
         packed = FHE.or(packed, FHE.shl(FHE.asEuint32(species), 3));
         packed = FHE.or(packed, FHE.select(aura, FHE.asEuint32(32), FHE.asEuint32(0)));
         packed = FHE.or(packed, FHE.shl(FHE.asEuint32(weight), 8));
         packed = FHE.or(packed, uint32(1) << 16);
         packed = FHE.select(paid, packed, FHE.asEuint32(0));
 
-        euint64 price = _price(isRare, isEpic, isLegend, isSecret, aura, weight);
+        price = _price(isRare, isEpic, isLegend, isSecret, aura, weight);
         price = FHE.select(paid, price, FHE.asEuint64(0));
+    }
 
+    function _storeFish(
+        euint32 packed,
+        euint64 price,
+        ebool isSecret,
+        address who,
+        address reader,
+        uint8 origin
+    ) private {
         FHE.allowThis(packed);
         FHE.allow(packed, who);
         FHE.allowThis(price);
         FHE.allow(price, who);
         FHE.allowThis(isSecret);
         FHE.allow(isSecret, who);
-        if (msg.sender != who) {
+        if (reader != address(0)) {
             // a session key cast this: let it read the catch (the tier inside `packed` already says Secret or not;
             // every extra ACL entry is a new storage slot, which is expensive on Sepolia today)
-            FHE.allow(packed, msg.sender);
-            FHE.allow(price, msg.sender);
+            FHE.allow(packed, reader);
+            FHE.allow(price, reader);
         }
 
         _fishIds[who].push(_fish.length);
@@ -526,7 +749,7 @@ contract DeepSecretGame is ZamaEthereumConfig {
                 price: price,
                 isSecret: isSecret,
                 state: STATE_EMBER,
-                origin: 0,
+                origin: origin,
                 targeted: false
             })
         );

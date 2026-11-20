@@ -19,7 +19,7 @@ const PORT = Number(process.env.PORT ?? 8787);
 const ROOM_CAP = Number(process.env.ROOM_CAP ?? 30);
 const TICK_MS = 100; // 10 Hz snapshots
 const WORLD = { w: 960, h: 540 };
-const GAME = process.env.GAME_ADDRESS ?? "0x6da1646B1cA6f41Ee163b77E290482d6B055799d"; // DeepSecretGame on Sepolia
+const GAME = process.env.GAME_ADDRESS ?? "0x7316ba642A6BB9966d6e713726Ac01EA148E96Eb"; // DeepSecretGame on Sepolia (Sambar deployment)
 const RPC = process.env.SEPOLIA_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com";
 // Animation states carry no catch information: everyone's catch looks the same to others (ART_BIBLE Addendum A2).
 const ANIMS = new Set(["idle", "walk", "cast", "fishing", "reel", "hold_unknown", "snatch", "flex"]);

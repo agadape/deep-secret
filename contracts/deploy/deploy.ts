@@ -18,13 +18,30 @@ const SEASON = {
   rodPrices: [20n, 40n, 80n, 160n],
 };
 
+// Sambar Ember, "Demo season" column of docs/SAMBAR_EMBER.md §1.7 (short cooldowns so judges can try it alone).
+const SAMBAR = {
+  snatchBait: 5n,
+  netCost: 3n,
+  thiefCooldown: 45,
+  pairCooldown: 180,
+  victimCooldown: 60,
+  wetSeconds: 20,
+  npcRestockCooldown: 180,
+  maxTargetedPerHour: 4,
+  minThiefCasts: 2,
+  shieldCasts: 3,
+  minEmber: 3,
+};
+
+// PearlCoin and SecretFishNFT bind to one game forever (setGame is one-time). To redeploy the game, move the
+// three records out of deployments/sepolia first (see deployments-archive/) so all three are deployed fresh.
 const func: DeployFunction = async function ({ deployments, getNamedAccounts, ethers }: HardhatRuntimeEnvironment) {
   const { deployer } = await getNamedAccounts();
   const { deploy, execute, read, log } = deployments;
 
   const coin = await deploy("PearlCoin", { from: deployer, args: [deployer], log: true });
   const nft = await deploy("SecretFishNFT", { from: deployer, args: [deployer], log: true });
-  const game = await deploy("DeepSecretGame", { from: deployer, args: [coin.address, nft.address, SEASON], log: true });
+  const game = await deploy("DeepSecretGame", { from: deployer, args: [coin.address, nft.address, SEASON, SAMBAR], log: true });
 
   if ((await read("PearlCoin", "game")) === ethers.ZeroAddress) {
     await execute("PearlCoin", { from: deployer, log: true }, "setGame", game.address);

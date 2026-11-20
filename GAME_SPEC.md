@@ -400,7 +400,7 @@ Fungsi utama `DeepSecretGame`:
 
 Event publik: `StarterClaimed`, `NameSet`, `Cast(player, zoneId, castId)`, `Sold(player, count)`, `RodUpgraded(player, level)`, `Flexed(player, tokenId, species, aura, weight, serial)`. Sambar Lite menambah `Snatched(thief, victim, targetFishId, newFishId)`, `NetSet(owner)`, `NpcRestocked(npcId, firstFishId, count)`, `ShieldBroken(player)`. Tidak ada event yang memuat isi ikan yang belum dipamerkan, posisi jaring, atau hasil sambaran.
 
-Sambar ditulis sebagai modul `abstract contract SambarModule` yang diwarisi `DeepSecretGame` (satu alamat, ACL sederhana). Kalau ukuran kontrak melewati 24 KB, logika dipindah ke library eksternal (perilaku ACL lewat `delegatecall` diuji di S24).
+Sambar ditulis langsung di `DeepSecretGame` (satu alamat, ACL sederhana; status 18 Nov: 23,9 KB dengan optimizer runs 200). Kalau ukuran kontrak melewati 24 KB, logika dipindah ke library eksternal (perilaku ACL lewat `delegatecall` diuji di S24).
 
 ### 10.2 Rancangan sirkuit `cast()` (perlu dispike, lihat §13)
 
@@ -468,9 +468,9 @@ Untuk menjaga kedalaman operasi berurutan di bawah batas (±25 langkah berantai,
 | S20 | Header COOP/COEP di hosting + MetaMask | Pop-up dompet dan tanda tangan berjalan normal — **✅ lulus lokal 17 Nov** (MetaMask: connect, izin dekripsi, 2 transaksi, buka 5 ikan dalam 8,9 s); header di hosting Vercel diuji saat deploy pertama |
 | S21 | Server realtime (Colyseus atau PartyKit) dengan 2 klien + login tanda tangan | Dua browser saling melihat gerak dengan jeda < 200 ms; server membaca event kontrak — **✅ lulus lokal 17 Nov** dengan server Node `ws` sederhana (p50 109 ms, login palsu ditolak, room ke-2 terbuka di pemain ke-31, event Cast diteruskan); jeda lewat hosting diuji saat deploy |
 | S22 | Phaser + SDK Zama dalam satu bundle di bawah COOP/COEP | Halaman siap main < 5 s di laptop; enkripsi tidak membekukan animasi — **✅ lulus 17 Nov**: build produksi tampil 1,34 s; enkripsi berjalan di Web Worker, dunia tetap 60 fps; dekripsi menyisakan satu jeda ±240 ms (sembunyikan di animasi tarik); enkripsi pertama 15–21 s, jadi dipanaskan di latar belakang saat halaman terbuka |
-| S23 | `snatch()` di Sepolia dengan burn + mint ERC-7984 dan 4 kombinasi hasil (dijalankan sebelum 1 Des) | Tidak kena `HCUTransactionDepthLimitExceeded`; event, jumlah record, dan gas identik untuk berhasil vs gagal |
-| S24 | ACL setelah perpindahan record | Korban gagal mendekripsi record baru penyambar; penyambar gagal mendekripsi jaring dan record korban; ACL tetap atas nama kontrak game bila memakai library |
-| S25 | `setNet` dari browser di bawah COOP/COEP | Enkripsi `euint32` + transaksi ≤ 25 s total |
+| S23 | `snatch()` di Sepolia dengan burn + mint ERC-7984 dan 4 kombinasi hasil (dijalankan sebelum 1 Des) | Tidak kena `HCUTransactionDepthLimitExceeded`; event, jumlah record, dan gas identik untuk berhasil vs gagal — **✅ lulus 18 Nov**: snatch 3,7–3,9 juta gas, `restockNpc` 11,8 juta, `setNet` 1,5 juta; urutan log berhasil = gagal (selisih gas berasal dari storage publik pertama kali, bukan dari hasil) |
+| S24 | ACL setelah perpindahan record | Korban gagal mendekripsi record baru penyambar; penyambar gagal mendekripsi jaring dan record korban; ACL tetap atas nama kontrak game bila memakai library — **✅ lulus 18 Nov** (tanpa library: Sambar tetap di dalam `DeepSecretGame`, 23,9 KB) |
+| S25 | `setNet` dari browser di bawah COOP/COEP | Enkripsi `euint32` + transaksi ≤ 25 s total — menunggu frontend |
 
 ---
 

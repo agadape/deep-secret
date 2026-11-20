@@ -26,7 +26,35 @@ type SeasonOverrides = Partial<{
   starterAmount: bigint;
   secretOneIn: number;
   endsInSeconds: number;
+  sambar: Partial<SambarCfg>;
 }>;
+
+type SambarCfg = {
+  snatchBait: bigint;
+  netCost: bigint;
+  thiefCooldown: number;
+  pairCooldown: number;
+  victimCooldown: number;
+  wetSeconds: number;
+  npcRestockCooldown: number;
+  maxTargetedPerHour: number;
+  minThiefCasts: number;
+  shieldCasts: number;
+  minEmber: number;
+};
+const DEMO_SAMBAR: SambarCfg = {
+  snatchBait: 5n,
+  netCost: 3n,
+  thiefCooldown: 45,
+  pairCooldown: 180,
+  victimCooldown: 60,
+  wetSeconds: 20,
+  npcRestockCooldown: 180,
+  maxTargetedPerHour: 4,
+  minThiefCasts: 2,
+  shieldCasts: 3,
+  minEmber: 3,
+};
 
 async function deploy(overrides: SeasonOverrides = {}) {
   const [deployer] = await ethers.getSigners();
@@ -50,7 +78,7 @@ async function deploy(overrides: SeasonOverrides = {}) {
   };
   const game = (await (
     await ethers.getContractFactory("DeepSecretGame")
-  ).deploy(await coin.getAddress(), await nft.getAddress(), cfg)) as unknown as DeepSecretGame;
+  ).deploy(await coin.getAddress(), await nft.getAddress(), cfg, { ...DEMO_SAMBAR, ...overrides.sambar })) as unknown as DeepSecretGame;
   await (await coin.setGame(await game.getAddress())).wait();
   await (await nft.setGame(await game.getAddress())).wait();
   return { coin, nft, game, cfg, gameAddress: await game.getAddress(), coinAddress: await coin.getAddress() };
@@ -203,16 +231,13 @@ describe("DeepSecretGame", function () {
       const ctx = await deploy({ secretOneIn: 2, secretQuota: 3, starterAmount: 10_000n });
       await ctx.game.connect(alice).claimStarter();
       let secrets = 0;
-      let legends = 0;
       for (let i = 0; i < 6; i++) {
-        for (const f of await castAndRead(ctx, alice)) {
-          if (f.tier === TIER.SECRET) secrets++;
-          if (f.tier === TIER.LEGENDA) legends++;
-        }
+        for (const f of await castAndRead(ctx, alice)) if (f.tier === TIER.SECRET) secrets++;
       }
-      expect(secrets).to.eq(3);
-      expect(legends).to.be.gt(0); // over-quota Secret rolls fall back to Legenda
-      expect(await fhevm.debugger.decryptEuint(FhevmType.euint8, await ctx.game.secretsLeftHandle())).to.eq(0n);
+      // A cast that would overshoot the quota turns all its Secret rolls into Legenda, so fewer than 3 is possible.
+      const left = await fhevm.debugger.decryptEuint(FhevmType.euint8, await ctx.game.secretsLeftHandle());
+      expect(secrets).to.be.gt(0).and.lte(3);
+      expect(BigInt(secrets) + left).to.eq(3n);
     });
   });
 
@@ -486,6 +511,182 @@ describe("DeepSecretGame", function () {
         ctx.game,
         "BadSession",
       );
+    });
+  });
+
+  describe("Sambar Ember (blind snatch, hidden nets)", function () {
+    const dbg32 = (h: string) => fhevm.debugger.decryptEuint(FhevmType.euint32, h);
+    const dbg64 = (h: string) => fhevm.debugger.decryptEuint(FhevmType.euint64, h);
+
+    /** Alice has a full bucket and no newcomer shield; Bob is a thief with 2 casts. */
+    async function island(overrides: SeasonOverrides = {}) {
+      const ctx = await deploy({ starterAmount: 10_000n, ...overrides });
+      for (const who of [alice, bob]) await ctx.game.connect(who).claimStarter();
+      const aliceFish = [];
+      for (let i = 0; i < 3; i++) aliceFish.push(...(await castAndRead(ctx, alice)));
+      for (let i = 0; i < 2; i++) await ctx.game.connect(bob).cast(0);
+      await time.increase(25); // past the "still wet" window
+      return { ctx, aliceFish: aliceFish.filter((f) => f.tier !== TIER.SECRET) };
+    }
+    const snatchLogs = async (rc: { logs: { address: string; topics: readonly string[] }[] }) =>
+      rc.logs.map((l) => `${l.address}:${l.topics[0]}:${l.topics.length}`);
+
+    it("moves the fish to the thief and leaves a Sandal Jepit, readable only by the right owner", async function () {
+      const { ctx, aliceFish } = await island();
+      const target = aliceFish[0];
+      const bobBefore = await balanceOf(ctx, bob);
+      const aliceBefore = await balanceOf(ctx, alice);
+      const newId = await ctx.game.fishCount();
+      await expect(ctx.game.connect(bob).snatch(alice.address, target.id))
+        .to.emit(ctx.game, "Snatched")
+        .withArgs(bob.address, alice.address, target.id, newId);
+
+      const sack = await ctx.game.getFish(newId);
+      expect(sack.owner).to.eq(bob.address);
+      expect(sack.origin).to.eq(1);
+      expect(await fhevm.userDecryptEuint(FhevmType.euint32, sack.packed, ctx.gameAddress, bob)).to.eq(target.packed);
+      await expect(fhevm.userDecryptEuint(FhevmType.euint32, sack.packed, ctx.gameAddress, alice)).to.be.rejected;
+      const slot = await ctx.game.getFish(target.id);
+      expect(await fhevm.userDecryptEuint(FhevmType.euint32, slot.packed, ctx.gameAddress, alice)).to.eq(0n);
+      await expect(fhevm.userDecryptEuint(FhevmType.euint32, slot.packed, ctx.gameAddress, bob)).to.be.rejected;
+      expect(slot.targeted).to.eq(true);
+      expect(await balanceOf(ctx, bob)).to.eq(bobBefore - 5n);
+      expect(await balanceOf(ctx, alice)).to.eq(aliceBefore); // the always-minted reward was 0
+    });
+
+    it("lets a hidden net catch the thief: the thief gets a sandal, the owner keeps the fish and the bait", async function () {
+      const { ctx, aliceFish } = await island();
+      const target = aliceFish[1];
+      const enc = await fhevm.createEncryptedInput(ctx.gameAddress, alice.address).add32(Number(target.id)).encrypt();
+      await expect(ctx.game.connect(alice).setNet(enc.handles[0], enc.inputProof)).to.emit(ctx.game, "NetSet");
+      const aliceAfterNet = await balanceOf(ctx, alice);
+      const net = (await ctx.game.player(alice.address)).netFish;
+      expect(await fhevm.userDecryptEuint(FhevmType.euint32, net, ctx.gameAddress, alice)).to.eq(target.id);
+      await expect(fhevm.userDecryptEuint(FhevmType.euint32, net, ctx.gameAddress, bob)).to.be.rejected;
+
+      const newId = await ctx.game.fishCount();
+      await ctx.game.connect(bob).snatch(alice.address, target.id);
+      expect(await dbg32((await ctx.game.getFish(newId)).packed)).to.eq(0n);
+      expect(await dbg32((await ctx.game.getFish(target.id)).packed)).to.eq(target.packed);
+      expect(await balanceOf(ctx, alice)).to.eq(aliceAfterNet + 5n);
+    });
+
+    it("makes Secret fish immune, and immunity looks exactly like a net", async function () {
+      const ctx = await deploy({ starterAmount: 10_000n, secretOneIn: 2 });
+      for (const who of [alice, bob]) await ctx.game.connect(who).claimStarter();
+      let secret;
+      for (let i = 0; i < 6 && !secret; i++) secret = (await castAndRead(ctx, alice)).find((f) => f.tier === TIER.SECRET);
+      if (!secret) throw new Error("no Secret at 1-in-2 odds");
+      for (let i = 0; i < 2; i++) await ctx.game.connect(bob).cast(0);
+      for (let i = 0; i < 3; i++) await ctx.game.connect(alice).cast(0);
+      await time.increase(25);
+      const aliceBefore = await balanceOf(ctx, alice);
+      const newId = await ctx.game.fishCount();
+      await ctx.game.connect(bob).snatch(alice.address, secret.id);
+      expect(await dbg32((await ctx.game.getFish(newId)).packed)).to.eq(0n);
+      expect(await dbg32((await ctx.game.getFish(secret.id)).packed)).to.eq(secret.packed);
+      expect(await balanceOf(ctx, alice)).to.eq(aliceBefore); // no net was hit, so no reward
+    });
+
+    it("leaves the same public trace whether the snatch succeeds or fails", async function () {
+      const { ctx, aliceFish } = await island({ sambar: { thiefCooldown: 0, pairCooldown: 0, victimCooldown: 0 } });
+      const caught = aliceFish[2];
+      const enc = await fhevm.createEncryptedInput(ctx.gameAddress, alice.address).add32(Number(caught.id)).encrypt();
+      await ctx.game.connect(alice).setNet(enc.handles[0], enc.inputProof);
+      await ctx.game.connect(bob).snatch(alice.address, aliceFish[4].id); // first snatch also breaks bob's shield (public)
+      const okRc = await (await ctx.game.connect(bob).snatch(alice.address, aliceFish[3].id)).wait();
+      const failRc = await (await ctx.game.connect(bob).snatch(alice.address, caught.id)).wait();
+      expect(await dbg32((await ctx.game.getFish(caught.id)).packed)).to.eq(caught.packed); // really failed
+      expect(await snatchLogs(failRc!)).to.deep.eq(await snatchLogs(okRc!));
+    });
+
+    it("enforces the public anti-grief rules", async function () {
+      const { ctx, aliceFish } = await island();
+      const blocked = (p: Promise<unknown>, reason: number) =>
+        expect(p).to.be.revertedWithCustomError(ctx.game, "SambarBlocked").withArgs(reason);
+      await blocked(ctx.game.connect(alice).snatch(alice.address, aliceFish[0].id), 9);
+      await ctx.game.connect(carol).cast(0); // carol: 1 cast, also shielded
+      await blocked(ctx.game.connect(carol).snatch(alice.address, aliceFish[0].id), 1);
+      await blocked(ctx.game.connect(alice).snatch(bob.address, 0), 3); // bob has the newcomer shield (2 casts < 3)
+
+      await ctx.game.connect(bob).snatch(alice.address, aliceFish[0].id);
+      await blocked(ctx.game.connect(bob).snatch(alice.address, aliceFish[1].id), 2); // thief cooldown
+      await time.increase(50);
+      await blocked(ctx.game.connect(bob).snatch(alice.address, aliceFish[1].id), 4); // pair cooldown (180 s)
+      await time.increase(200);
+      await blocked(ctx.game.connect(bob).snatch(alice.address, aliceFish[0].id), 8); // targeted once already
+      // bob broke his own shield by snatching from a player
+      expect((await ctx.game.player(bob.address)).shieldBroken).to.eq(true);
+      const bobFish = await ctx.game.fishIdsOf(bob.address);
+      await expect(ctx.game.connect(alice).snatch(bob.address, bobFish[0])).to.emit(ctx.game, "Snatched");
+      // fresh catches are protected for 20 s
+      const rc = await (await ctx.game.connect(alice).cast(0)).wait();
+      const fresh = ctx.game.interface.parseLog(rc!.logs.find((l) => l.address === ctx.gameAddress)!)!.args.firstFishId;
+      await time.increase(250);
+      await ctx.game.connect(alice).cast(0);
+      await blocked(ctx.game.connect(bob).snatch(alice.address, fresh + 5n), 8);
+    });
+
+    it("caps how often one victim can be targeted per hour", async function () {
+      const { ctx, aliceFish } = await island({ sambar: { thiefCooldown: 0, pairCooldown: 0, victimCooldown: 0, maxTargetedPerHour: 2 } });
+      await ctx.game.connect(bob).snatch(alice.address, aliceFish[0].id);
+      await ctx.game.connect(bob).snatch(alice.address, aliceFish[1].id);
+      await expect(ctx.game.connect(bob).snatch(alice.address, aliceFish[2].id))
+        .to.be.revertedWithCustomError(ctx.game, "SambarBlocked")
+        .withArgs(6);
+      await time.increase(3601);
+      await expect(ctx.game.connect(bob).snatch(alice.address, aliceFish[2].id)).to.emit(ctx.game, "Snatched");
+    });
+
+    it("gives a broke thief only a sandal and leaves the victim untouched", async function () {
+      const { ctx, aliceFish } = await island();
+      for (let i = 0; i < 2; i++) await ctx.game.connect(carol).cast(0); // carol never claimed: no coins
+      const target = aliceFish[0];
+      const newId = await ctx.game.fishCount();
+      await ctx.game.connect(carol).snatch(alice.address, target.id);
+      expect(await dbg32((await ctx.game.getFish(newId)).packed)).to.eq(0n);
+      expect(await dbg32((await ctx.game.getFish(target.id)).packed)).to.eq(target.packed);
+    });
+
+    it("keeps Pak Kumis's practice bucket stocked, netted and Secret-free", async function () {
+      const { ctx } = await island({ sambar: { thiefCooldown: 0, npcRestockCooldown: 60 } });
+      const npc = await ctx.game.PAK_KUMIS();
+      await expect(ctx.game.connect(carol).restockNpc()).to.emit(ctx.game, "NpcRestocked");
+      const ids = await ctx.game.fishIdsOf(npc);
+      expect(ids.length).to.eq(6);
+      expect(await ctx.game.npcFresh()).to.eq(6);
+      for (const id of ids) expect(Number(await dbg32((await ctx.game.getFish(id)).packed)) & 7).to.not.eq(TIER.SECRET);
+      await expect(ctx.game.restockNpc()).to.be.revertedWithCustomError(ctx.game, "SambarBlocked").withArgs(10);
+      await time.increase(25); // fresh fish are wet
+
+      const net = await dbg32((await ctx.game.player(npc)).netFish);
+      expect(net).to.be.gte(ids[0]).and.lte(ids[0] + 7n);
+      for (const id of ids.slice(0, 4)) {
+        const before = await dbg32((await ctx.game.getFish(id)).packed);
+        const newId = await ctx.game.fishCount();
+        await ctx.game.connect(bob).snatch(npc, id); // no shield, cooldown or minimum-bucket rules for the NPC
+        const got = await dbg32((await ctx.game.getFish(newId)).packed);
+        expect(got).to.eq(id === net ? 0n : before);
+      }
+      expect(await ctx.game.npcFresh()).to.eq(2);
+      await time.increase(61);
+      await expect(ctx.game.restockNpc()).to.emit(ctx.game, "NpcRestocked");
+    });
+
+    it("works through a session key, on behalf of the player", async function () {
+      const { ctx, aliceFish } = await island();
+      const key = ethers.Wallet.createRandom().connect(ethers.provider);
+      await ctx.game
+        .connect(bob)
+        .authorizeSession(key.address, (await time.latest()) + 3600, { value: ethers.parseEther("0.01") });
+      const newId = await ctx.game.fishCount();
+      await expect(ctx.game.connect(key).snatch(alice.address, aliceFish[0].id))
+        .to.emit(ctx.game, "Snatched")
+        .withArgs(bob.address, alice.address, aliceFish[0].id, newId);
+      const sack = await ctx.game.getFish(newId);
+      expect(sack.owner).to.eq(bob.address);
+      expect(await fhevm.userDecryptEuint(FhevmType.euint32, sack.packed, ctx.gameAddress, key)).to.eq(aliceFish[0].packed);
+      expect(await dbg64(sack.price)).to.eq(aliceFish[0].price);
     });
   });
 

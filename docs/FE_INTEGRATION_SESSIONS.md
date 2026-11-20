@@ -13,7 +13,9 @@ Di kedua mode, semua aksi game (klaim, lempar, buka ikan, jual, upgrade joran, p
 
 ## Kontrak baru (Sepolia)
 
-Alamat dan ABI sudah disinkronkan ke `frontend/src/generated/contracts.ts` (`npm run sync`, otomatis saat `npm run dev`).
+> **Diganti 18 Nov 2026:** kontrak di-deploy ulang untuk Sambar Ember. Alamat terbaru ada di [FE_INTEGRATION_SAMBAR.md](FE_INTEGRATION_SAMBAR.md); semua fungsi kunci sesi di bawah tetap sama. Tabel ini adalah deployment sebelumnya.
+
+Alamat dan ABI deployment ini disinkronkan ke `frontend/src/generated/contracts.ts` (`npm run sync`, otomatis saat `npm run dev`).
 
 | Kontrak | Alamat |
 |---|---|
